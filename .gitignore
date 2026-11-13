@@ -1,0 +1,14 @@
+# Claves: NUNCA al repositorio
+github_token.txt
+discord_webhook.txt
+inara_clave.txt
+# Datos que genera el escucha (se suben solos a cdsn-datos)
+faccion.json
+faccion.json.tmp
+trafico.json
+trafico.json.tmp
+# Configuracion local y copias
+config.json
+sistemas.txt
+*.bak*
+__pycache__/
