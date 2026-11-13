@@ -1,0 +1,15 @@
+# Servicio de systemd: copiar a /etc/systemd/system/escucha-eddn.service
+# (ajusta la ruta si el escucha no esta en /root/elite/escucha-eddn)
+[Unit]
+Description=Escucha EDDN para el Panel Elite
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/root/elite/escucha-eddn
+ExecStart=/usr/bin/python3 /root/elite/escucha-eddn/escucha_faccion.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
