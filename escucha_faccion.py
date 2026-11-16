@@ -424,6 +424,57 @@ def traf_save():
     except OSError as e:
         log("trafico:", e)
 
+# ---------- filtro de datos sospechosos (v6) ----------
+# Cualquiera puede mandar mensajes a EDDN. Antes de aceptar un dato se comprueba que tenga sentido;
+# si es raro se descarta, y si es un salto grande de influencia se espera a que otro piloto lo confirme.
+SALTO_MAX = 20.0                 # puntos de influencia de CDSN entre dos datos de menos de 48 h
+SOSP = {}                        # sistema -> {"firma", "uid", "t"} dato raro esperando confirmacion
+_avisado = {}                    # sistema -> hora del ultimo aviso (uno cada 6 h como mucho)
+
+def aviso_sosp(sname, motivo):
+    with lock:
+        DB["eddn"]["descartados"] = DB["eddn"].get("descartados", 0) + 1
+    log(f"Dato sospechoso en {sname}: {motivo}")
+    if time.time() - _avisado.get(sname, 0) > 6 * 3600:
+        _avisado[sname] = time.time()
+        discord(f"🛡️ **{sname}**: dato de EDDN descartado por sospechoso ({motivo})")
+
+def sospechoso(sname, m, hdr, t, mine):
+    """Devuelve el motivo si el dato no es fiable, o None si se puede usar."""
+    if t > time.time() + 600:
+        return "fecha en el futuro"
+    facs = m.get("Factions") or []
+    infs = [x.get("Influence") for x in facs]
+    if any(not isinstance(v, (int, float)) or v < 0 or v > 1 for v in infs):
+        return "influencias fuera de rango"
+    if facs and not 0.97 <= sum(infs) <= 1.03:
+        return f"las influencias suman {sum(infs) * 100:.0f} %"
+    if len({x.get("Name") for x in facs}) != len(facs):
+        return "facciones repetidas"
+    if not mine or mine.get("fuera"):
+        return None
+    pos, p0 = m.get("StarPos"), mine.get("pos")
+    if pos and p0 and max(abs(a - b) for a, b in zip(pos, p0)) > 1:
+        return "el sistema ha cambiado de coordenadas"
+    me = next((x for x in facs if x.get("Name") == FAC), None)
+    if me is None or mine.get("inf") is None:
+        return None
+    salto = abs(me["Influence"] * 100 - mine["inf"])
+    if salto < SALTO_MAX or t - (mine.get("t") or 0) > 48 * 3600:
+        return None
+    # salto grande: hace falta que otro piloto mande lo mismo
+    firma = _firma([{"n": x.get("Name"), "inf": round((x.get("Influence") or 0) * 100, 2)} for x in facs])
+    uid = str(hdr.get("uploaderID") or "")[:12]
+    p = SOSP.get(sname)
+    if p and p["firma"] == firma and p["uid"] != uid and t - p["t"] < 48 * 3600:
+        SOSP.pop(sname, None)
+        log(f"{sname}: salto de {salto:.1f} puntos confirmado por otro piloto")
+        return None
+    if not p or p["firma"] != firma:
+        SOSP[sname] = {"firma": firma, "uid": uid, "t": t}
+        return f"salto de {salto:.1f} puntos de influencia, esperando a que otro piloto lo confirme"
+    return "pendiente de confirmar"
+
 def process(pkt):
     hit = next((n for b_, n in mis_sistemas() if b_ in pkt), None)
     pp_ = b'"ControllingPower"' in pkt or b'"Powers"' in pkt
@@ -482,6 +533,11 @@ def process(pkt):
                                                  "prog": m.get("PowerplayStateControlProgress"), "pots": m.get("Powers") or [], "t": t}
             dirty[0] = True
     if FAC_B not in pkt or not m.get("Factions"):
+        return
+    motivo = sospechoso(sname, m, hdr, t, mine)
+    if motivo:
+        if motivo != "pendiente de confirmar":
+            aviso_sosp(sname, motivo)
         return
     ex = {"pos": m.get("StarPos"),
           "sis": {"pob": m.get("Population"), "eco": m.get("SystemEconomy"), "eco2": m.get("SystemSecondEconomy"),
