@@ -4,6 +4,7 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
+VERSION = "v7"                   # v7: version visible y guerra thargoide
 import base64, calendar, hashlib, json, math, os, threading, time, urllib.error, urllib.request, urllib.parse, zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -19,7 +20,7 @@ FAC = CFG["faccion"]
 DATA_FILE = os.path.join(HERE, "faccion.json")
 SYS_FILE = os.path.join(HERE, "sistemas.txt")
 lock = threading.Lock()
-DB = {"faccion": FAC, "sistemas": {}, "eddn": {"ok": False, "ultimo": 0, "msgs": 0, "mios": 0}, "t": 0}
+DB = {"ver": VERSION, "faccion": FAC, "sistemas": {}, "eddn": {"ok": False, "ultimo": 0, "msgs": 0, "mios": 0}, "t": 0}
 dirty = [False]
 
 def log(*a):
@@ -32,6 +33,7 @@ def load():
         if j.get("faccion") == FAC:
             DB["sistemas"] = j.get("sistemas") or {}
             if j.get("tick_global"): DB["tick_global"] = j["tick_global"]
+            if j.get("thargoides"): DB["thargoides"] = j["thargoides"]
     except (OSError, ValueError):
         pass
     try:
@@ -106,7 +108,7 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
             v_ = (extra or {}).get(k_) or (old or {}).get(k_)
             if v_:
                 new[k_] = v_
-        for k_ in ("trafico", "zc", "pn", "tk"):         # actividad: siempre se conserva
+        for k_ in ("trafico", "zc", "pn", "tk", "thargoid"):         # actividad: siempre se conserva
             if (old or {}).get(k_):
                 new[k_] = old[k_]
         if old and old.get("inf") is not None and abs(old["inf"] - inf) >= 0.01:
@@ -336,7 +338,8 @@ def resumen():
     for v in S:
         gap = v["inf"] - (v.get("segunda_inf") or 0)
         tr = v["inf"] - v["prev"] if v.get("prev") is not None else 0
-        est = ", ".join([ES.get(x, x) for x in v.get("activos") or []] + [ES.get(y, y) + " (pend.)" for y in v.get("pendientes") or []])
+        est = ", ".join([ES.get(x, x) for x in v.get("activos") or []] + [ES.get(y, y) + " (pend.)" for y in v.get("pendientes") or []]
+                        + (["👾 " + TG_ES.get(v["thargoid"].get("estado"), v["thargoid"].get("estado"))] if (v.get("thargoid") or {}).get("estado") else []))
         L.append((f"{'🏰' if v.get('ctrl') else '·'} {v['sys']}: {v['inf']:.1f} % ({'+' if gap >= 0 else ''}{gap:.1f})"
                   + (f" {'▲' if tr > 0 else '▼'}{abs(tr):.1f}" if abs(tr) >= 0.1 else "")).replace(".", ",") + (f" · {est}" if est else ""))
     discord("\n".join(L))
@@ -363,7 +366,7 @@ def gh_loop():
             token = ""
         if token:
             with lock:
-                h = hashlib.md5((json.dumps(DB["sistemas"], sort_keys=True) + str(DB.get("tick_global"))).encode()).hexdigest()
+                h = hashlib.md5((json.dumps(DB["sistemas"], sort_keys=True) + str(DB.get("tick_global")) + json.dumps(DB.get("thargoides"), sort_keys=True)).encode()).hexdigest()
                 body = json.dumps(DB, ensure_ascii=False, indent=1)
             if h != last_h or time.time() - last_t > 6 * 3600:
                 hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
@@ -406,6 +409,7 @@ def mis_sistemas():
     if time.time() - NAMES["t"] > 60:
         with lock:
             NAMES["b"] = [(n.encode("utf-8"), n) for n, v in DB["sistemas"].items() if not v.get("fuera")]
+            NAMES["tg"] = [n.encode("utf-8") for n in DB.get("thargoides") or {}]
         NAMES["t"] = time.time()
     return NAMES["b"]
 
@@ -423,6 +427,69 @@ def traf_save():
         os.replace(TRAF_FILE + ".tmp", TRAF_FILE)
     except OSError as e:
         log("trafico:", e)
+
+# ---------- guerra thargoide (v7) ----------
+# Los FSDJump/Location/CarrierJump traen "ThargoidWar" si el sistema esta en guerra con los thargoides.
+# Sistemas propios: campo "thargoid" en el sistema. Sistemas a menos de 20 al: DB["thargoides"].
+TG_ES = {"Thargoid_Probing": "Alerta", "Thargoid_Harvest": "Invasión", "Thargoid_Controlled": "Controlado",
+         "Thargoid_Stronghold": "Fortaleza titán", "Thargoid_Recovery": "Recuperación"}
+
+def _tg_dato(tw, t):
+    return {"estado": tw.get("CurrentState") or "", "exito": tw.get("NextStateSuccess") or "",
+            "fallo": tw.get("NextStateFailure") or "", "logrado": bool(tw.get("SuccessStateReached")),
+            "prog": round((tw.get("WarProgress") or 0) * 100, 1), "puertos": tw.get("RemainingPorts"),
+            "quedan": tw.get("EstimatedRemainingTime") or "", "t": t}
+
+def _mas_cerca(pos):
+    """(distancia, sistema propio mas cercano) o None"""
+    with lock:
+        P_ = [(n, v["pos"]) for n, v in DB["sistemas"].items() if v.get("pos") and not v.get("fuera") and None not in v["pos"]]
+    return min(((math.dist(pos, q), n) for n, q in P_), default=None)
+
+def thargoides(sname, m, mine, t):
+    tw = m.get("ThargoidWar") or {}
+    est = tw.get("CurrentState") or ""
+    pos = m.get("StarPos")
+    lab = TG_ES.get(est, est)
+    extra = f" · progreso {tw.get('WarProgress', 0) * 100:.0f} %".replace(".", ",") if est and tw.get("WarProgress") is not None else ""
+    aviso = None
+    if mine and not mine.get("fuera"):
+        with lock:
+            o = mine.get("thargoid") or {}
+            if o.get("t", 0) > t:
+                return                                   # dato mas viejo que el que tengo
+            old = o.get("estado") or ""
+            if est:
+                mine["thargoid"] = _tg_dato(tw, t); dirty[0] = True
+            elif o:
+                mine.pop("thargoid", None); dirty[0] = True
+        if est != old:
+            aviso = f"👾 **{sname}**: " + (f"thargoides · {lab}{extra}" if est else "ya no hay thargoides")
+    elif sname and pos and None not in pos:
+        with lock:
+            z = DB.setdefault("thargoides", {})
+            o = z.get(sname) or {}
+        if o.get("t", 0) > t:
+            return
+        if not est:
+            if o:
+                with lock:
+                    z.pop(sname, None); dirty[0] = True
+                NAMES["t"] = 0
+                aviso = f"👾 **{sname}** (a {o.get('ly')} al de {o.get('junto')}): ya no hay thargoides"
+        else:
+            mc = _mas_cerca(pos)
+            if not mc or mc[0] > ZONA_LY:
+                return
+            with lock:
+                z[sname] = dict(_tg_dato(tw, t), pos=pos, junto=mc[1], ly=round(mc[0], 1)); dirty[0] = True
+            if not o:
+                NAMES["t"] = 0
+            if est != (o.get("estado") or ""):
+                aviso = f"👾 Thargoides a {mc[0]:.0f} al de **{mc[1]}**: {lab} en **{sname}**{extra}"
+    if aviso:
+        log(aviso.replace("**", ""))
+        discord(aviso)
 
 # ---------- filtro de datos sospechosos (v6) ----------
 # Cualquiera puede mandar mensajes a EDDN. Antes de aceptar un dato se comprueba que tenga sentido;
@@ -478,7 +545,8 @@ def sospechoso(sname, m, hdr, t, mine):
 def process(pkt):
     hit = next((n for b_, n in mis_sistemas() if b_ in pkt), None)
     pp_ = b'"ControllingPower"' in pkt or b'"Powers"' in pkt
-    if not hit and FAC_B not in pkt and not pp_:
+    tg_ = b'"ThargoidWar"' in pkt or any(b_ in pkt for b_ in NAMES.get("tg") or [])
+    if not hit and FAC_B not in pkt and not pp_ and not tg_:
         return                                           # rapido: no es de ningun sistema que interese
     d = json.loads(pkt)
     sch = d.get("$schemaRef", "")
@@ -526,6 +594,7 @@ def process(pkt):
         return
     if "/journal/" not in sch or m.get("event") not in ("FSDJump", "Location", "CarrierJump"):
         return
+    thargoides(sname, m, mine, t)                         # guerra thargoide (v7)
     # Powerplay de los sistemas a menos de 20 al de los tuyos
     if (m.get("ControllingPower") or m.get("Powers")) and cerca(m.get("StarPos")):
         with lock:
@@ -650,6 +719,9 @@ def saver_loop():
                 z_ = DB.get("zona") or {}
                 for k in [k for k, v in z_.items() if time.time() - (v.get("t") or 0) > 7 * 86400]:
                     z_.pop(k, None)
+                tz_ = DB.get("thargoides") or {}                 # thargoides de alrededor sin noticias en 7 dias
+                for k in [k for k, v in tz_.items() if time.time() - (v.get("t") or 0) > 7 * 86400]:
+                    tz_.pop(k, None)
         if dirty[0]:
             try:
                 save()
@@ -658,7 +730,7 @@ def saver_loop():
 
 if __name__ == "__main__":
     load()
-    log(f"Escuchando a '{FAC}' · {len(DB['sistemas'])} sistemas conocidos · puerto {CFG['puerto']}")
+    log(f"Escucha EDDN {VERSION} · escuchando a '{FAC}' · {len(DB['sistemas'])} sistemas conocidos · puerto {CFG['puerto']}")
     for fn in (eddn_loop, edsm_loop, saver_loop, gh_loop, discord_loop, resumen_loop, tick_global_loop):
         threading.Thread(target=fn, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", CFG["puerto"]), H).serve_forever()

@@ -15,6 +15,10 @@ la [cdsn-web](https://github.com/ortemedder/cdsn-web) y el [escucha-s3](https://
   para prever el siguiente (`tick_ult`, `tick_prox`, `tick_disp`). Además, el **tick global** de
   [tick.edcd.io](https://tick.edcd.io) como respaldo (`tick_global`).
 - **Histórico de influencia** (`hinf`, últimos 14 cambios).
+- **Filtro de datos sospechosos**: descarta datos de EDDN sin sentido y espera confirmación de otro piloto en saltos grandes.
+- **Guerra thargoide**: en tus sistemas (campo `thargoid` de cada sistema) y en los de menos de 20 al
+  (`thargoides`: estado, progreso, puertos, tiempo restante y sistema propio más cercano). Aviso por Discord al cambiar.
+- **Versión** visible al arrancar y en `faccion.json` (`ver`).
 - **GitHub**: sube `faccion.json` a cdsn-datos cada 15 min si ha cambiado.
 - **Discord** (opcional): avisos de sistemas nuevos, conflictos, retiradas, expansiones, ventaja baja,
   y resumen diario a las 21:00.
@@ -49,5 +53,7 @@ systemctl restart escucha-eddn
 - Discord: avisos y resumen diario.
 - v4: tick de cada sistema (ventanas cruzadas entre días) y tick global de tick.edcd.io.
 - v5: histórico de influencia (`hinf`).
+- v6: filtro de datos sospechosos de EDDN.
+- v7: versión visible (`ver`) y guerra thargoide (`thargoid`, `thargoides`) con avisos a Discord.
 
 Creado por CMDR ORTEM ED DER (ortemedder@gmail.com) con Claude.
