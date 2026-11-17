@@ -18,6 +18,10 @@ la [cdsn-web](https://github.com/ortemedder/cdsn-web) y el [escucha-s3](https://
 - **Filtro de datos sospechosos**: descarta datos de EDDN sin sentido y espera confirmación de otro piloto en saltos grandes.
 - **Guerra thargoide**: en tus sistemas (campo `thargoid` de cada sistema) y en los de menos de 20 al
   (`thargoides`: estado, progreso, puertos, tiempo restante y sistema propio más cercano). Aviso por Discord al cambiar.
+- **Más datos (v8)**: rivales que suben varios ticks seguidos (`rivales`), estaciones con dueño, plataformas,
+  mercado, astillero y atraques concedidos/denegados (`estaciones`), saltos por hora (`saltos`), rutas que pasan
+  por tus sistemas (`rutas`), candidatos para expandirse (`expansion`), códice cercano (`codice`) y desde
+  cuándo está cada portanaves (`d`). Avisos por Discord: rival que sube 3 ticks, estación ganada/perdida y pico de saltos.
 - **Versión** visible al arrancar y en `faccion.json` (`ver`).
 - **GitHub**: sube `faccion.json` a cdsn-datos cada 15 min si ha cambiado.
 - **Discord** (opcional): avisos de sistemas nuevos, conflictos, retiradas, expansiones, ventaja baja,
@@ -55,5 +59,6 @@ systemctl restart escucha-eddn
 - v5: histórico de influencia (`hinf`).
 - v6: filtro de datos sospechosos de EDDN.
 - v7: versión visible (`ver`) y guerra thargoide (`thargoid`, `thargoides`) con avisos a Discord.
+- v8: rivales, estaciones, mercado, atraques, saltos por hora, rutas, candidatos de expansión y códice.
 
 Creado por CMDR ORTEM ED DER (ortemedder@gmail.com) con Claude.
