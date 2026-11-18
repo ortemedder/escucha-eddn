@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v8"                   # v8: rivales, estaciones, mercado, atraques, saltos, rutas, expansion y codice
+VERSION = "v9"                   # v9: posibles ataques por pico de visitas (aviso por Discord e historial)
+                                 # v8: rivales, estaciones, mercado, atraques, saltos, rutas, expansion y codice
 import base64, calendar, hashlib, json, math, os, threading, time, urllib.error, urllib.request, urllib.parse, zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -34,7 +35,7 @@ def load():
             DB["sistemas"] = j.get("sistemas") or {}
             if j.get("tick_global"): DB["tick_global"] = j["tick_global"]
             if j.get("thargoides"): DB["thargoides"] = j["thargoides"]
-            for k_ in ("expansion", "codice"):           # v8
+            for k_ in ("expansion", "codice", "ataques"):   # v8 / v9
                 if j.get(k_): DB[k_] = j[k_]
     except (OSError, ValueError):
         pass
@@ -383,7 +384,8 @@ def gh_loop():
         if token:
             with lock:
                 h = hashlib.md5((json.dumps(DB["sistemas"], sort_keys=True) + str(DB.get("tick_global")) + json.dumps(DB.get("thargoides"), sort_keys=True)
-                                 + json.dumps(DB.get("expansion"), sort_keys=True) + json.dumps(DB.get("codice"), sort_keys=True)).encode()).hexdigest()
+                                 + json.dumps(DB.get("expansion"), sort_keys=True) + json.dumps(DB.get("codice"), sort_keys=True)
+                                 + json.dumps(DB.get("ataques"), sort_keys=True)).encode()).hexdigest()
                 body = json.dumps(DB, ensure_ascii=False, indent=1)
             if h != last_h or time.time() - last_t > 6 * 3600:
                 hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
@@ -743,7 +745,7 @@ def process(pkt):
         uid = str(hdr["uploaderID"])[:12]
         if uid not in ids:
             ids.add(uid)
-            for old_ in sorted(dd)[:-8]:
+            for old_ in sorted(dd)[:-9]:                 # 9 dias: hoy, ayer y 7 para la media del pico
                 dd.pop(old_, None)
             with lock:
                 mine["trafico"] = {k: len(v) for k, v in dd.items()}
@@ -897,6 +899,56 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+# ---------- v9: posibles ataques (mismas reglas que la web y el radar) ----------
+# Pico de visitas: hoy o ayer al menos 5 pilotos y el triple de la media de los 7 dias anteriores.
+# Si ademas nuestra influencia baja 1 punto o mas desde ayer: POSIBLE ATAQUE.
+# DB["ataques"] = {"act": {sistema: {...}}, "hist": [ataques terminados, el mas reciente primero]}
+def _pico_vis(v):
+    tr = v.get("trafico") or {}
+    d = lambda n: tr.get(time.strftime("%Y-%m-%d", time.gmtime(time.time() - n * 86400)), 0)
+    for k in (0, 1):
+        m = sum(d(i) for i in range(k + 1, k + 8)) / 7
+        if d(k) >= 5 and d(k) >= 3 * max(m, 1):
+            return d(k), m, "ayer" if k else "hoy"
+    return None
+
+def revisa_ataques():
+    c1 = lambda x: f"{x:.1f}".replace(".", ",")
+    msgs, now = [], time.time()
+    with lock:
+        A = DB.setdefault("ataques", {"act": {}, "hist": []})
+        act, hist = A.setdefault("act", {}), A.setdefault("hist", [])
+        vistos = set()
+        for n, v in DB["sistemas"].items():
+            if v.get("fuera") or v.get("inf") is None:
+                continue
+            p = _pico_vis(v)
+            baja = v["prev"] - v["inf"] if v.get("prev") is not None else 0
+            if p and baja >= 1:
+                vistos.add(n)
+                a = act.get(n)
+                if not a:                                # ataque nuevo
+                    act[n] = {"ini": int(now), "v": p[0], "m": round(p[1], 1), "dia": p[2], "antes": v["prev"],
+                              "min": v["inf"], "inf": v["inf"], "ctrl": bool(v.get("ctrl"))}
+                    msgs.append(f"🚨 **POSIBLE ATAQUE** en **{n}**: {p[0]} pilotos {p[2]} (media {c1(p[1])}) "
+                                f"y la influencia baja {c1(baja)} puntos ({c1(v['inf'])} %)")
+                else:
+                    a["v"] = max(a["v"], p[0]); a["inf"] = v["inf"]; a["min"] = min(a["min"], v["inf"])
+        for n in [n for n in act if n not in vistos]:    # ya no hay pico o ya no baja: termina
+            a = act.pop(n); v = DB["sistemas"].get(n) or {}
+            fin = v.get("inf", a["inf"])
+            dif = fin - a["antes"]
+            res = "recuperada" if dif >= -0.5 else "perdida"
+            hist.insert(0, {"sys": n, "ini": a["ini"], "fin": int(now), "v": a["v"], "m": a["m"], "antes": a["antes"],
+                            "min": a["min"], "inf": fin, "dif": round(dif, 1), "res": res, "ctrl": a.get("ctrl", False)})
+            msgs.append(f"{'✅' if res == 'recuperada' else '📉'} Fin del posible ataque en **{n}**: influencia {c1(a['antes'])} → {c1(fin)} % "
+                        f"({'+' if dif >= 0 else ''}{c1(dif)}), {'recuperada' if res == 'recuperada' else 'no se ha recuperado'}")
+        del hist[30:]                                     # los 30 ultimos
+        if msgs:
+            dirty[0] = True
+    for m_ in msgs:
+        log(m_.replace("**", "")); discord(m_)
+
 def saver_loop():
     n_ = 0
     while True:
@@ -904,6 +956,10 @@ def saver_loop():
         n_ += 1
         if n_ % 30 == 0:                                 # cada 5 min
             traf_save()
+            try:
+                revisa_ataques()
+            except Exception as e:                       # nunca debe tumbar el guardado
+                log("ataques:", e)
             with lock:
                 z_ = DB.get("zona") or {}
                 for k in [k for k, v in z_.items() if time.time() - (v.get("t") or 0) > 7 * 86400]:
