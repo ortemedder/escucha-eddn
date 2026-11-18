@@ -60,5 +60,6 @@ systemctl restart escucha-eddn
 - v6: filtro de datos sospechosos de EDDN.
 - v7: versión visible (`ver`) y guerra thargoide (`thargoid`, `thargoides`) con avisos a Discord.
 - v8: rivales, estaciones, mercado, atraques, saltos por hora, rutas, candidatos de expansión y códice.
+- v9: posibles ataques: si un sistema tiene pico de visitas (hoy o ayer ≥ 5 pilotos y ≥ 3 veces la media de 7 días) y la influencia baja ≥ 1 punto, avisa por Discord; al terminar avisa si la influencia se recuperó y lo guarda en `ataques.hist` (los 30 últimos) de faccion.json. El tráfico guarda ahora 9 días.
 
 Creado por CMDR ORTEM ED DER (ortemedder@gmail.com) con Claude.
