@@ -759,8 +759,10 @@ def process(pkt):
             ids.add(uid)
             for old_ in sorted(dd)[:-9]:                 # 9 dias: hoy, ayer y 7 para la media del pico
                 dd.pop(old_, None)
-            with lock:
-                mine["trafico"] = {k: len(v) for k, v in dd.items()}
+            with lock:                                   # v10: los numeros se guardan 31 dias (los ids solo 9)
+                tr_ = dict(mine.get("trafico") or {})
+                tr_.update({k: len(v) for k, v in dd.items()})
+                mine["trafico"] = dict(sorted(tr_.items())[-31:])
                 dirty[0] = True
     # senales: zonas de conflicto y portanaves
     if mine and "/fsssignaldiscovered/" in sch:

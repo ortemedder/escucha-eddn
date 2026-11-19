@@ -104,7 +104,7 @@ Reglas de las fases (las mismas en el escucha, el radar y la web; 7 días como m
 ### Actividad
 | Campo | Qué es |
 |---|---|
-| `trafico` | Pilotos distintos por día (`AAAA-MM-DD`: número), 9 días |
+| `trafico` | Pilotos distintos por día (`AAAA-MM-DD`: número), **31 días** (v10; antes 9). Los ids anónimos de los pilotos solo se guardan 9 días, en `trafico.json` de la Orange Pi (no se sube) |
 | `saltos` | Saltos que llegan por hora (últimas 48 h) |
 | `rutas` | Rutas que pasan por el sistema, por día (8 días) |
 | `zc` | Zonas de conflicto vistas en 24 h: `n`, `i` intensidad (Low/Med/High), `t` |
