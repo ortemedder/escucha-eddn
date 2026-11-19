@@ -4,7 +4,9 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v9"                   # v9: posibles ataques por pico de visitas (aviso por Discord e historial)
+VERSION = "v10"                  # v10: dia y fase de cada conflicto, resultado diario, en juego, historial de conflictos,
+                                 #      quien sube cuando bajamos, vigilancia de rivales y avisos de conflicto a Discord
+                                 # v9: posibles ataques por pico de visitas (aviso por Discord e historial)
                                  # v8: rivales, estaciones, mercado, atraques, saltos, rutas, expansion y codice
 import base64, calendar, hashlib, json, math, os, threading, time, urllib.error, urllib.request, urllib.parse, zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,7 +37,7 @@ def load():
             DB["sistemas"] = j.get("sistemas") or {}
             if j.get("tick_global"): DB["tick_global"] = j["tick_global"]
             if j.get("thargoides"): DB["thargoides"] = j["thargoides"]
-            for k_ in ("expansion", "codice", "ataques"):   # v8 / v9
+            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales"):   # v8 / v9 / v10
                 if j.get(k_): DB[k_] = j[k_]
     except (OSError, ValueError):
         pass
@@ -96,8 +98,12 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
         con = [{"tipo": c.get("WarType"), "estado": c.get("Status"),
                 "contra": (c["Faction2"] if c["Faction1"].get("Name") == FAC else c["Faction1"]).get("Name"),
                 "ganados": (c["Faction1"] if c["Faction1"].get("Name") == FAC else c["Faction2"]).get("WonDays"),
-                "perdidos": (c["Faction2"] if c["Faction1"].get("Name") == FAC else c["Faction1"]).get("WonDays")}
+                "perdidos": (c["Faction2"] if c["Faction1"].get("Name") == FAC else c["Faction1"]).get("WonDays"),
+                "en_juego": (c["Faction1"] if c["Faction1"].get("Name") == FAC else c["Faction2"]).get("Stake") or "",      # v10: lo que perdemos si perdemos
+                "en_juego_rival": (c["Faction2"] if c["Faction1"].get("Name") == FAC else c["Faction1"]).get("Stake") or ""}   # v10: lo que ganamos si ganamos
                for c in conflicts or [] if FAC in ((c.get("Faction1") or {}).get("Name"), (c.get("Faction2") or {}).get("Name"))]
+        if src != "EDDN" and (old or {}).get("conflictos"):
+            con = old["conflictos"]                      # v10: EDSM no trae conflictos; se conservan los de EDDN
         new = {"sys": sysname, "t": t, "src": src, "inf": inf, "ctrl": ctrl_name == FAC,
                "estado": me.get("FactionState") or "None", "activos": st("ActiveStates"), "pendientes": st("PendingStates"),
                "recuperando": st("RecoveringStates"), "segunda": sec.get("Name") or "",
@@ -111,7 +117,7 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
             v_ = (extra or {}).get(k_) or (old or {}).get(k_)
             if v_:
                 new[k_] = v_
-        for k_ in ("trafico", "zc", "pn", "tk", "thargoid", "saltos", "rutas", "estaciones"):  # actividad: siempre se conserva
+        for k_ in ("trafico", "zc", "pn", "tk", "thargoid", "saltos", "rutas", "estaciones", "cseg", "sube_cuando_baja"):  # actividad: siempre se conserva
             if (old or {}).get(k_):
                 new[k_] = old[k_]
         if old and old.get("inf") is not None and abs(old["inf"] - inf) >= 0.01:
@@ -139,8 +145,12 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
         new["rivales"] = sorted([{"n": x["n"], "racha": new["rach"][x["n"]], "inf": x["inf"], "dif": round(x["inf"] - inf, 2)}
                                  for x in new["todas"] if x["n"] != FAC and new["rach"].get(x["n"], 0) >= 2], key=lambda r_: -r_["racha"])
         tick_track(sysname, new, src, t)
+        msgs = conf_track(sysname, old, new, t, src)    # v10: dia, fase y resultado de cada conflicto
+        msgs += quien_sube(sysname, old, new, o_inf, t, src)   # v10: quien sube cuando bajamos y rivales vigilados
         DB["sistemas"][sysname] = new
         dirty[0] = True
+    for m_ in msgs:
+        log(m_.replace("**", "")); discord(m_)
     avisos(sysname, old, new)
     return True
 
@@ -246,6 +256,7 @@ def tick_global_loop():                                  # tick de la galaxia (c
                 with lock:
                     DB["tick_global"] = tg; dirty[0] = True
                 log("Tick global:", time.strftime("%d/%m %H:%M", time.localtime(tg)))
+                conf_tick(tg)                            # v10: pasa un dia en los conflictos activos
         except Exception as e:
             log("Tick global:", e)
         time.sleep(1800)
@@ -338,7 +349,7 @@ def avisos(sysname, old, new):
     if new.get("conflictos") and not old.get("conflictos"):
         c = new["conflictos"][0]
         tipo = {"war": "Guerra", "civilwar": "Guerra civil", "election": "Elecciones"}.get((c.get("tipo") or "").lower(), "Conflicto")
-        discord(f"⚔️ **{sysname}**: {tipo} contra **{c.get('contra')}**")
+        discord(f"{'✉️' if (c.get('tipo') or '').lower() == 'election' else '⚔️'} **{sysname}**: {tipo} contra **{c.get('contra')}**")
     for r_ in new.get("rivales") or []:                  # v8: rival que sube 3 ticks seguidos
         if r_["racha"] == 3 and (old.get("rach") or {}).get(r_["n"], 0) == 2 and r_["dif"] > -15:
             discord(f"⬆️ **{sysname}**: **{r_['n']}** lleva 3 ticks seguidos subiendo ({r_['inf']:.1f} %, {r_['dif']:+.1f} sobre nosotros)".replace(".", ","))
@@ -385,7 +396,8 @@ def gh_loop():
             with lock:
                 h = hashlib.md5((json.dumps(DB["sistemas"], sort_keys=True) + str(DB.get("tick_global")) + json.dumps(DB.get("thargoides"), sort_keys=True)
                                  + json.dumps(DB.get("expansion"), sort_keys=True) + json.dumps(DB.get("codice"), sort_keys=True)
-                                 + json.dumps(DB.get("ataques"), sort_keys=True)).encode()).hexdigest()
+                                 + json.dumps(DB.get("ataques"), sort_keys=True) + json.dumps(DB.get("conflictos_hist"), sort_keys=True)
+                                 + json.dumps(DB.get("rivales"), sort_keys=True)).encode()).hexdigest()
                 body = json.dumps(DB, ensure_ascii=False, indent=1)
             if h != last_h or time.time() - last_t > 6 * 3600:
                 hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
@@ -747,8 +759,10 @@ def process(pkt):
             ids.add(uid)
             for old_ in sorted(dd)[:-9]:                 # 9 dias: hoy, ayer y 7 para la media del pico
                 dd.pop(old_, None)
-            with lock:
-                mine["trafico"] = {k: len(v) for k, v in dd.items()}
+            with lock:                                   # v10: los numeros se guardan 31 dias (los ids solo 9)
+                tr_ = dict(mine.get("trafico") or {})
+                tr_.update({k: len(v) for k, v in dd.items()})
+                mine["trafico"] = dict(sorted(tr_.items())[-31:])
                 dirty[0] = True
     # senales: zonas de conflicto y portanaves
     if mine and "/fsssignaldiscovered/" in sch:
@@ -924,14 +938,18 @@ def revisa_ataques():
                 continue
             p = _pico_vis(v)
             baja = v["prev"] - v["inf"] if v.get("prev") is not None else 0
-            if p and baja >= 1:
+            if p and baja >= 1 and not [c for c in v.get("conflictos") or [] if c.get("estado") in ("active", "pending")]:   # v10: con conflicto manda el marcador
                 vistos.add(n)
                 a = act.get(n)
                 if not a:                                # ataque nuevo
                     act[n] = {"ini": int(now), "v": p[0], "m": round(p[1], 1), "dia": p[2], "antes": v["prev"],
                               "min": v["inf"], "inf": v["inf"], "ctrl": bool(v.get("ctrl"))}
+                    q_ = v.get("sube_cuando_baja") or {}
+                    if q_.get("n") and now - (q_.get("t") or 0) < 2 * 86400:
+                        act[n]["quien"] = q_["n"]
                     msgs.append(f"🚨 **POSIBLE ATAQUE** en **{n}**: {p[0]} pilotos {p[2]} (media {c1(p[1])}) "
-                                f"y la influencia baja {c1(baja)} puntos ({c1(v['inf'])} %)")
+                                f"y la influencia baja {c1(baja)} puntos ({c1(v['inf'])} %)"
+                                + (f" · sube **{q_['n']}** (+{c1(q_['d'])})" if act[n].get("quien") else ""))
                 else:
                     a["v"] = max(a["v"], p[0]); a["inf"] = v["inf"]; a["min"] = min(a["min"], v["inf"])
         for n in [n for n in act if n not in vistos]:    # ya no hay pico o ya no baja: termina
@@ -940,7 +958,8 @@ def revisa_ataques():
             dif = fin - a["antes"]
             res = "recuperada" if dif >= -0.5 else "perdida"
             hist.insert(0, {"sys": n, "ini": a["ini"], "fin": int(now), "v": a["v"], "m": a["m"], "antes": a["antes"],
-                            "min": a["min"], "inf": fin, "dif": round(dif, 1), "res": res, "ctrl": a.get("ctrl", False)})
+                            "min": a["min"], "inf": fin, "dif": round(dif, 1), "res": res, "ctrl": a.get("ctrl", False),
+                            "quien": a.get("quien") or ""})
             msgs.append(f"{'✅' if res == 'recuperada' else '📉'} Fin del posible ataque en **{n}**: influencia {c1(a['antes'])} → {c1(fin)} % "
                         f"({'+' if dif >= 0 else ''}{c1(dif)}), {'recuperada' if res == 'recuperada' else 'no se ha recuperado'}")
         del hist[30:]                                     # los 30 ultimos
@@ -948,6 +967,156 @@ def revisa_ataques():
             dirty[0] = True
     for m_ in msgs:
         log(m_.replace("**", "")); discord(m_)
+
+# ---------- v10: conflictos dia a dia ----------
+# EDDN solo da los dias GANADOS de cada faccion (WonDays). El dia del conflicto (1..7) lo cuenta el escucha:
+# - si lo vio pendiente y luego activo: dia exacto (empieza en 1 y suma 1 en cada tick global)
+# - si lo descubre ya activo: dia minimo = ganados + perdidos + 1 ("dia_exacto": false)
+# El resultado de cada dia (G ganado, P perdido, = sin resultado, ? sin datos) se mira con el primer dato despues del tick.
+# Gana quien llegue a 4 dias; si nadie llega en 7 dias, gana quien tenga mas (igual = empate).
+DIAS_CONF = 7
+FASE_TXT = {"pendiente": "PENDIENTE", "victoria": "VICTORIA SEGURA", "sin_remedio": "SISTEMA EN DERROTA (sin remedio)",
+            "decisivo": "DÍA DECISIVO", "a_un_dia": "A UN DÍA DE GANAR", "defensa": "DEFENSA EN CURSO",
+            "derrota": "SISTEMA EN DERROTA", "disputado": "DISPUTADO", "igualado": "DISPUTADO (igualado)"}
+FASE_AVISA = ("decisivo", "derrota", "sin_remedio", "a_un_dia", "victoria")   # avisos a Discord al entrar en estas fases
+
+def final_conf(g, p, dia):
+    """Como acabaria el conflicto con g-p al terminar el dia 'dia': victoria, derrota, empate o sigue."""
+    if g >= 4: return "victoria"
+    if p >= 4: return "derrota"
+    if dia >= DIAS_CONF: return "victoria" if g > p else "derrota" if p > g else "empate"
+    return "sigue"
+
+def fase_conf(g, p, dia):
+    """Fase para los avisos (mismas reglas que el radar y la web). dia = el que se esta jugando (1..7)."""
+    quedan = DIAS_CONF + 1 - dia                          # dias que quedan, contando el de hoy
+    if p + quedan < g: return "victoria"
+    if g + quedan < p: return "sin_remedio"
+    if p == 3 or (dia >= DIAS_CONF and abs(g - p) <= 1): return "decisivo"
+    if g == 3 and p <= 1: return "a_un_dia"
+    if g > p: return "defensa"
+    if g < p: return "derrota"
+    return "disputado" if g == 0 and dia <= 3 else "igualado"
+
+def juego_conf(g, p, dia):
+    """Que se juega hoy: 'GANAR = victoria · PERDER = empate' (solo lo que cambia el final)."""
+    r = lambda x: {"victoria": "victoria", "derrota": "derrota", "empate": "empate", "sigue": "sigue"}[x]
+    a, b, c = final_conf(g + 1, p, dia), final_conf(g, p + 1, dia), final_conf(g, p, dia)
+    return f"GANAR = {r(a)} · PERDER = {r(b)}" + (f" · SIN RESULTADO = {r(c)}" if dia >= DIAS_CONF else "")
+
+def conf_track(sysname, old, new, t, src):
+    """Se llama con el cerrojo cogido. Rellena dia/fase/resultados en new['conflictos'] y devuelve avisos."""
+    msgs, seg = [], {k: dict(v) for k, v in ((old or {}).get("cseg") or {}).items()}
+    hoy = []
+    for c in new.get("conflictos") or []:
+        r_ = c.get("contra") or "?"; hoy.append(r_)
+        s_ = seg.setdefault(r_, {"tipo": c.get("tipo"), "ini": None, "pend": None, "exacto": False, "dia": 0,
+                                 "res": [], "ref": [0, 0], "tick": None, "eval": None, "fase": None})
+        g, p = c.get("ganados") or 0, c.get("perdidos") or 0
+        if src == "EDDN" and c.get("estado") == "pending":
+            s_["pend"] = s_.get("pend") or int(t)
+        elif src == "EDDN" and c.get("estado") == "active":
+            if not s_.get("ini"):                         # empieza (o lo descubrimos ya empezado)
+                s_["ini"], s_["exacto"] = int(t), bool(s_.get("pend"))
+                s_["dia"] = 1 if s_["exacto"] else min(DIAS_CONF, g + p + 1)
+                s_["ref"], s_["tick"], s_["res0"] = [g, p], DB.get("tick_global"), s_["dia"]
+                if r_ not in (DB.get("rivales") or {}) or "conflicto" not in DB["rivales"][r_].get("motivo", ""):
+                    vigila(r_, sysname, t, "conflicto")
+            elif s_.get("eval") and t > s_["eval"]:       # primer dato despues del tick: resultado del dia anterior
+                dg, dp = g - s_["ref"][0], p - s_["ref"][1]
+                res = "G" if dg > 0 and dp <= 0 else "P" if dp > 0 and dg <= 0 else "=" if not dg and not dp else "?"
+                s_["res"] = (s_.get("res") or []) + [res]; s_["ref"], s_["eval"] = [g, p], None
+                tipo = {"war": "Guerra", "civilwar": "Guerra civil", "election": "Elecciones"}.get((c.get("tipo") or "").lower(), "Conflicto")
+                lab = {"G": "✅ ganado", "P": "❌ perdido", "=": "➖ sin resultado", "?": "❔ no se sabe"}[res]
+                msgs.append(f"{'✉️' if (c.get('tipo') or '') == 'election' else '⚔️'} **{sysname}**: {tipo} contra **{r_}** · "
+                            f"día {s_['dia'] - 1}/{DIAS_CONF} {lab} · van {g}-{p}")
+        s_.update({"tipo": c.get("tipo"), "g": g, "p": p, "mio": c.get("en_juego") or "", "suyo": c.get("en_juego_rival") or ""})
+        if c.get("estado") == "active" and s_.get("ini"):
+            fase = fase_conf(g, p, s_["dia"])
+            c.update({"dia": s_["dia"], "dia_exacto": s_["exacto"], "desde": s_["ini"], "fase": fase,
+                      "juego": juego_conf(g, p, s_["dia"]), "res": s_.get("res") or [], "res_desde": s_.get("res0") or 1})
+            if fase != s_.get("fase") and fase in FASE_AVISA:
+                txt = c["juego"] if fase == "decisivo" else ""
+                msgs.append(f"{'🚨' if fase in ('decisivo', 'derrota', 'sin_remedio') else '🟢'} **{sysname}**: **{FASE_TXT[fase]}** contra **{r_}** · "
+                            f"día {s_['dia']}/{DIAS_CONF}{'' if s_['exacto'] else ' (aprox.)'} · {g}-{p}"
+                            + (f" · {txt}" if txt else "") + (f" · en juego: {s_['mio']}" if s_["mio"] and fase != "victoria" else ""))
+            s_["fase"] = fase
+        elif c.get("estado") == "pending":
+            c.update({"fase": "pendiente", "desde": s_.get("pend")})
+            s_["fase"] = "pendiente"
+    if src == "EDDN":
+        for r_ in [r_ for r_ in seg if r_ not in hoy]:   # conflicto terminado (o pendiente que no llego a empezar)
+            s_ = seg.pop(r_)
+            if not s_.get("ini"):
+                continue
+            g, p = s_.get("g") or 0, s_.get("p") or 0
+            res = "ganado" if g > p else "perdido" if p > g else "desconocido" if g == 3 or (s_.get("dia") or 0) >= DIAS_CONF else "empate"
+            H = DB.setdefault("conflictos_hist", [])
+            H.insert(0, {"sys": sysname, "contra": r_, "tipo": s_.get("tipo"), "ini": s_["ini"], "fin": int(t), "dias": s_.get("dia"),
+                         "dia_exacto": s_.get("exacto"), "g": g, "p": p, "res": res, "res_dias": s_.get("res") or [],
+                         "res_desde": s_.get("res0") or 1, "en_juego": s_.get("mio") or "", "en_juego_rival": s_.get("suyo") or "",
+                         "ctrl": bool((old or {}).get("ctrl")), "inf_antes": (old or {}).get("inf"), "inf_despues": new.get("inf")})
+            del H[50:]                                    # los 50 ultimos
+    new["cseg"] = seg
+    return msgs
+
+def conf_tick(tg):
+    """Tick global nuevo: los conflictos activos pasan al dia siguiente."""
+    with lock:
+        for n, v in DB["sistemas"].items():
+            seg = v.get("cseg") or {}
+            for r_, s_ in seg.items():
+                if not s_.get("ini") or s_.get("tick") == tg:
+                    continue
+                if tg <= s_["ini"] - 6 * 3600 or (s_.get("tick") and tg < s_["tick"]):
+                    continue                              # tick viejo
+                if tg < s_["ini"]:                        # es el tick que lo empezo (llego tarde a tick.edcd.io)
+                    s_["tick"] = tg; continue
+                if s_.get("eval"):                        # un dia entero sin datos
+                    s_["res"] = (s_.get("res") or []) + ["?"]
+                s_["eval"], s_["tick"] = tg, tg
+                s_["dia"] = min(DIAS_CONF, (s_.get("dia") or 1) + 1)
+                for c in v.get("conflictos") or []:      # el panel ve el dia nuevo enseguida
+                    if c.get("contra") == r_ and c.get("estado") == "active":
+                        g, p = c.get("ganados") or 0, c.get("perdidos") or 0
+                        c.update({"dia": s_["dia"], "fase": fase_conf(g, p, s_["dia"]), "juego": juego_conf(g, p, s_["dia"])})
+                dirty[0] = True
+
+# ---------- v10: quien sube cuando bajamos y vigilancia de rivales ----------
+# Cuando nuestra influencia baja 1 punto o mas, se apunta la faccion que mas sube en ese sistema (sube_cuando_baja)
+# y se anade a DB["rivales"]. Si un rival vigilado sube 2 puntos o mas en OTRO de nuestros sistemas, aviso a Discord.
+_vig_avisado = {}                # (rival, sistema) -> hora del ultimo aviso
+
+def vigila(n, sysname, t, motivo):
+    R = DB.setdefault("rivales", {})
+    r_ = R.setdefault(n, {"veces": 0, "sis": [], "motivo": "", "ini": int(t)})
+    r_["veces"] += 1; r_["ult"] = int(t)
+    if sysname not in r_["sis"]:
+        r_["sis"] = (r_["sis"] + [sysname])[-10:]
+    if motivo not in r_["motivo"]:
+        r_["motivo"] = (r_["motivo"] + ", " + motivo).strip(", ")
+
+def quien_sube(sysname, old, new, o_inf, t, src):
+    """Se llama con el cerrojo cogido. Devuelve avisos."""
+    msgs = []
+    if src != "EDDN" or not o_inf or not old or old.get("inf") is None:
+        return msgs
+    dif = {x["n"]: x["inf"] - o_inf[x["n"]] for x in new.get("todas") or [] if x["n"] != FAC and x["n"] in o_inf}
+    if old["inf"] - new["inf"] >= 1 and dif:
+        n, d = max(dif.items(), key=lambda kv: kv[1])
+        if d >= 0.5:
+            new["sube_cuando_baja"] = {"n": n, "d": round(d, 2), "baja": round(old["inf"] - new["inf"], 2), "t": int(t)}
+            vigila(n, sysname, t, "sube cuando bajamos")
+    R = DB.get("rivales") or {}
+    for n, d in dif.items():
+        r_ = R.get(n)
+        if not r_ or d < 2 or sysname in r_.get("sis", []) or time.time() - _vig_avisado.get((n, sysname), 0) < 86400:
+            continue
+        _vig_avisado[(n, sysname)] = time.time()
+        inf_r = next((x["inf"] for x in new["todas"] if x["n"] == n), 0)
+        msgs.append(f"🕵️ **{n}** (vigilada: {r_.get('motivo')} en {', '.join(r_.get('sis', [])[:3])}) sube {d:+.1f} en **{sysname}** "
+                    f"({inf_r:.1f} %, nosotros {new['inf']:.1f} %)".replace(".", ","))
+    return msgs
 
 def saver_loop():
     n_ = 0
@@ -967,6 +1136,9 @@ def saver_loop():
                 tz_ = DB.get("thargoides") or {}                 # thargoides de alrededor sin noticias en 7 dias
                 for k in [k for k, v in tz_.items() if time.time() - (v.get("t") or 0) > 7 * 86400]:
                     tz_.pop(k, None)
+                rv_ = DB.get("rivales") or {}                    # v10: rivales sin noticias en 60 dias
+                for k in [k for k, v in rv_.items() if time.time() - (v.get("ult") or 0) > 60 * 86400]:
+                    rv_.pop(k, None)
                 ez_ = DB.get("expansion") or {}                  # v8: candidatos sin noticias en 14 dias
                 for k in [k for k, v in ez_.items() if time.time() - (v.get("t") or 0) > 14 * 86400]:
                     ez_.pop(k, None)
