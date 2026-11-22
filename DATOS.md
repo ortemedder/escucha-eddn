@@ -26,7 +26,7 @@ Horas: siempre en **segundos UTC** (epoch). Influencias: en **%** (0–100, con 
 | **EDSM** (cada 6 h) | API | Facciones de los sistemas sin datos de EDDN (**sin conflictos**) y coordenadas |
 | **tick.edcd.io** (cada 30 min) | API | Hora del último tick de la galaxia |
 
-Lo que **no** da EDDN: quién es cada piloto, qué misiones hace, en qué día va un conflicto (lo cuenta el escucha) ni el resultado de cada día (lo deduce el escucha).
+Lo que **no** da EDDN: quién es cada piloto, el arquitecto de un sistema ni el avance de las obras (Spansh tampoco tiene el arquitecto; se ve en Inara), qué misiones hace, en qué día va un conflicto (lo cuenta el escucha) ni el resultado de cada día (lo deduce el escucha).
 
 ---
 
@@ -133,6 +133,7 @@ Reglas de las fases (las mismas en el escucha, el radar y la web; 7 días como m
 |---|---|
 | `f`, `tipo`, `estado`, `ls`, `pads`, `mid`, `t` | Dueño, tipo, estado (Damaged, UnderRepairs, UnderAttack...), distancia (ls), plataformas, MarketID, hora |
 | `estado_t`, `serv`, `eco` | Desde cuándo tiene ese estado, número de servicios y economía (v11) |
+| `obra` | Solo en las obras (*Construction Site*, dueño Brewer Corporation): nombre de la estación que se está construyendo. Cuando alguien atraca en la estación terminada, la obra se borra (v11.1) |
 | `atq`, `neg` | Atraques por día (`ok`/`no`) y motivos de denegación |
 | `mer` | Mercado: `vende` mejores ventas, `alta` precios disparados, `barato` chollos |
 | `naves`, `mods` | Naves del astillero y número de módulos |
@@ -154,7 +155,7 @@ Si un rival vigilado sube 2 puntos o más en **otro** sistema nuestro, aviso a D
 Facción nueva en un sistema · ya no está · ventaja baja · conflicto que empieza ✉/⚔ · **resultado de cada día del conflicto** (v10) ·
 **fases DÍA DECISIVO, SISTEMA EN DERROTA, sin remedio, A UN DÍA DE GANAR y VICTORIA SEGURA** (v10) · conflicto terminado ·
 retirada / expansión / guerra / elecciones · rival que sube 3 ticks · **rival vigilado que sube en otro sistema** (v10) ·
-estación ganada o perdida · **estación dañada / bajo ataque y su vuelta a la normalidad** (v11) · **asentamiento ganado o perdido** (v11) · **expansión de otra facción que puede llegar a nuestros sistemas** (v11) · **otra facción en retirada en un sistema nuestro** (v11) · **felicidad de CDSN que baja a descontenta o peor** (v11) · **cambio de seguridad y de población (5 % o más)** (v11) · pico de saltos · thargoides · dato sospechoso · POSIBLE ATAQUE (no salta si hay conflicto, v10) y su final · resumen diario a las 21:00.
+estación ganada o perdida · **estación dañada / bajo ataque y su vuelta a la normalidad** (v11) · **asentamiento ganado o perdido** (v11) · **obra nueva y obra terminada** (v11.1) · **expansión de otra facción que puede llegar a nuestros sistemas** (v11) · **otra facción en retirada en un sistema nuestro** (v11) · **felicidad de CDSN que baja a descontenta o peor** (v11) · **cambio de seguridad y de población (5 % o más)** (v11) · pico de saltos · thargoides · dato sospechoso · POSIBLE ATAQUE (no salta si hay conflicto, v10) y su final · resumen diario a las 21:00.
 
 ## 7. Vecinos: expansiones y retiradas (`vecinos`, v11)
 `vecinos["Sistema"]`: sistemas (nuestros o a menos de `vecinos_ly` = 30 al) donde **otra** facción está en expansión o retirada.
