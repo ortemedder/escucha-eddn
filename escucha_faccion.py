@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.1"                # v11.1: obras (construction sites) en nuestros sistemas: aviso al aparecer y al terminarse
+VERSION = "v11.2"                # v11.2: CDSN con 0 % de influencia (EDSM la sigue listando) cuenta como "ya no esta"
+                                 # v11.1: obras (construction sites) en nuestros sistemas: aviso al aparecer y al terminarse
                                  # v11: expansiones y retiradas de alrededor, felicidad, estado de estaciones,
                                  #      cambios de poblacion y seguridad, saltos por hora (14 dias) y asentamientos
                                  # v10: dia y fase de cada conflicto, resultado diario, en juego, historial de conflictos,
@@ -79,6 +80,8 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
     """facs: lista de dicts con Name, Influence (0..1), FactionState, ActiveStates... (formato journal)."""
     facs = sorted(facs, key=lambda x: -(x.get("Influence") or 0))
     me = next((x for x in facs if x.get("Name") == FAC), None)
+    if me is not None and (me.get("Influence") or 0) <= 0:
+        me = None                                        # v11.2: con 0 % ya no esta en el sistema
     with lock:
         old = DB["sistemas"].get(sysname)
         if old and old.get("t", 0) >= t:                 # ya tengo un dato igual o mas nuevo:
