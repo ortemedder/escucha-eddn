@@ -21,6 +21,7 @@ Horas: siempre en **segundos UTC** (epoch). Influencias: en **%** (0–100, con 
 | EDDN `fsssignaldiscovered` | Al escanear el sistema | Zonas de conflicto y portanaves |
 | EDDN `navroute` | Al trazar una ruta | Rutas que pasan por nuestros sistemas |
 | EDDN `codexentry` | Descubrimientos | Códice a menos de 20 al |
+| EDDN `approachsettlement` | Al acercarse a un asentamiento (Odyssey) | Asentamientos de nuestros sistemas y su dueño (v11) |
 | Cabecera de EDDN (`uploaderID`) | Todos | **Visitas**: pilotos distintos por día (id anónimo, no se sabe quién es) |
 | **EDSM** (cada 6 h) | API | Facciones de los sistemas sin datos de EDDN (**sin conflictos**) y coordenadas |
 | **tick.edcd.io** (cada 30 min) | API | Hora del último tick de la galaxia |
@@ -46,7 +47,8 @@ Lo que **no** da EDDN: quién es cada piloto, qué misiones hace, en qué día v
 | `ataques.act` | Posibles ataques en curso: `ini`, `v` pilotos, `m` media, `antes`/`min`/`inf` influencia, `quien` (v10) | v9 |
 | `ataques.hist` | Últimos 30 posibles ataques terminados: lo de arriba + `fin`, `dif`, `res` (recuperada/perdida) | v9 |
 | **`conflictos_hist`** | **Últimos 50 conflictos terminados** (ver punto 4) | **v10** |
-| **`rivales`** | **Facciones vigiladas** (ver punto 5) | **v10** |
+| `rivales` | Facciones vigiladas (ver punto 5) | v10 |
+| **`vecinos`** | **Expansiones y retiradas de otras facciones** en nuestros sistemas y a menos de 30 al (ver punto 7) | **v11** |
 
 ---
 
@@ -62,7 +64,8 @@ Lo que **no** da EDDN: quién es cada piloto, qué misiones hace, en qué día v
 | `ctrl`, `ctrl_n` | Si CDSN controla el sistema y quién lo controla |
 | `estado`, `activos`, `pendientes`, `recuperando` | Estados de CDSN (en inglés: War, Election, Expansion, Retreat...) |
 | `segunda`, `segunda_inf` | Segunda facción e influencia |
-| `todas` | Todas las facciones: `n` nombre, `inf`, `gov`, `alg`, `act`, `pend`, `jug` (de jugadores) |
+| `todas` | Todas las facciones: `n` nombre, `inf`, `gov`, `alg`, `act`, `pend`, `jug` (de jugadores), `fel` felicidad 1–5 (v11) |
+| `fel` | Felicidad de CDSN en el sistema: 1 eufórica, 2 contenta, 3 descontenta, 4 infeliz, 5 desesperada (v11) |
 | `rach`, `rivales` | Ticks seguidos que sube cada facción; las que llevan 2 o más (`racha`, `inf`, `dif`) |
 | `fuera` | CDSN ya no está en el sistema |
 
@@ -106,6 +109,7 @@ Reglas de las fases (las mismas en el escucha, el radar y la web; 7 días como m
 |---|---|
 | `trafico` | Pilotos distintos por día (`AAAA-MM-DD`: número), **31 días** (v10; antes 9). Los ids anónimos de los pilotos solo se guardan 9 días, en `trafico.json` de la Orange Pi (no se sube) |
 | `saltos` | Saltos que llegan por hora (últimas 48 h) |
+| `hdia` | Saltos por día y hora UTC: `AAAA-MM-DD` → 24 números, **14 días** (v11, para el mapa de horas) |
 | `rutas` | Rutas que pasan por el sistema, por día (8 días) |
 | `zc` | Zonas de conflicto vistas en 24 h: `n`, `i` intensidad (Low/Med/High), `t` |
 | `pn` | Portanaves vistos en 7 días: matrícula → `n` nombre, `t` visto, `d` desde cuándo |
@@ -116,12 +120,19 @@ Reglas de las fases (las mismas en el escucha, el radar y la web; 7 días como m
 |---|---|
 | `pos` | Coordenadas `[x, y, z]` |
 | `sis` | `pob` población, `eco`/`eco2` economía, `seg` seguridad, `gov` gobierno, `alg` alianza |
+| `hsis` | Cambios de población y seguridad: `[hora, pob, seg]`, los 10 últimos (v11) |
 | `pp` | `pot` potencia, `est` estado, `prog` progreso, `ref` refuerzo, `soc` socavamiento, `pots` presentes |
+
+### Asentamientos (`asent["Nombre"]`, v11)
+| Campo | Qué es |
+|---|---|
+| `f`, `cuerpo`, `mid`, `eco`, `t` | Dueño, cuerpo, MarketID, economía, hora (los 40 más recientes) |
 
 ### Estaciones (`estaciones["Nombre"]`)
 | Campo | Qué es |
 |---|---|
-| `f`, `tipo`, `estado`, `ls`, `pads`, `mid`, `t` | Dueño, tipo, estado, distancia (ls), plataformas, MarketID, hora |
+| `f`, `tipo`, `estado`, `ls`, `pads`, `mid`, `t` | Dueño, tipo, estado (Damaged, UnderRepairs, UnderAttack...), distancia (ls), plataformas, MarketID, hora |
+| `estado_t`, `serv`, `eco` | Desde cuándo tiene ese estado, número de servicios y economía (v11) |
 | `atq`, `neg` | Atraques por día (`ok`/`no`) y motivos de denegación |
 | `mer` | Mercado: `vende` mejores ventas, `alta` precios disparados, `barato` chollos |
 | `naves`, `mods` | Naves del astillero y número de módulos |
@@ -143,9 +154,13 @@ Si un rival vigilado sube 2 puntos o más en **otro** sistema nuestro, aviso a D
 Facción nueva en un sistema · ya no está · ventaja baja · conflicto que empieza ✉/⚔ · **resultado de cada día del conflicto** (v10) ·
 **fases DÍA DECISIVO, SISTEMA EN DERROTA, sin remedio, A UN DÍA DE GANAR y VICTORIA SEGURA** (v10) · conflicto terminado ·
 retirada / expansión / guerra / elecciones · rival que sube 3 ticks · **rival vigilado que sube en otro sistema** (v10) ·
-estación ganada o perdida · pico de saltos · thargoides · dato sospechoso · POSIBLE ATAQUE (no salta si hay conflicto, v10) y su final · resumen diario a las 21:00.
+estación ganada o perdida · **estación dañada / bajo ataque y su vuelta a la normalidad** (v11) · **asentamiento ganado o perdido** (v11) · **expansión de otra facción que puede llegar a nuestros sistemas** (v11) · **otra facción en retirada en un sistema nuestro** (v11) · **felicidad de CDSN que baja a descontenta o peor** (v11) · **cambio de seguridad y de población (5 % o más)** (v11) · pico de saltos · thargoides · dato sospechoso · POSIBLE ATAQUE (no salta si hay conflicto, v10) y su final · resumen diario a las 21:00.
 
-## 7. Ideas para más adelante (datos que EDDN manda y no guardamos)
-- `Happiness` de cada facción (felicidad).
-- Asentamientos (`ApproachSettlement`) y sus dueños en Odyssey.
+## 7. Vecinos: expansiones y retiradas (`vecinos`, v11)
+`vecinos["Sistema"]`: sistemas (nuestros o a menos de `vecinos_ly` = 30 al) donde **otra** facción está en expansión o retirada.
+`pos`, `ly` y `junto` (nuestro sistema más cercano), `propio` (es nuestro), `nfac`, `t`,
+`exp`: `[{n, inf, est: "pend"/"act", obj: [[sistema nuestro, ly], ...]}]` (`obj` = nuestros sistemas a menos de `expansion_ly` (20 al), con menos de 7 facciones y sin esa facción: adonde puede llegar),
+`ret`: `[{n, inf, est}]`. Se borran tras 10 días sin noticias.
+
+## 8. Ideas para más adelante (datos que EDDN manda y no guardamos)
 - Cuerpos escaneados (`Scan`, `FSSAllBodiesFound`) en nuestros sistemas.

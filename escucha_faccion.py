@@ -4,7 +4,9 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v10"                  # v10: dia y fase de cada conflicto, resultado diario, en juego, historial de conflictos,
+VERSION = "v11"                  # v11: expansiones y retiradas de alrededor, felicidad, estado de estaciones,
+                                 #      cambios de poblacion y seguridad, saltos por hora (14 dias) y asentamientos
+                                 # v10: dia y fase de cada conflicto, resultado diario, en juego, historial de conflictos,
                                  #      quien sube cuando bajamos, vigilancia de rivales y avisos de conflicto a Discord
                                  # v9: posibles ataques por pico de visitas (aviso por Discord e historial)
                                  # v8: rivales, estaciones, mercado, atraques, saltos, rutas, expansion y codice
@@ -13,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = {"faccion": "Caballeros de Sion", "puerto": 8090, "edsm_horas": 6, "github": "ortemedder/cdsn-datos",
-       "github_min": 15, "resumen_hora": 21, "expansion_ly": 20}
+       "github_min": 15, "resumen_hora": 21, "expansion_ly": 20, "vecinos_ly": 30}
 try:
     with open(os.path.join(HERE, "config.json"), encoding="utf-8") as f:
         CFG.update(json.load(f))
@@ -37,7 +39,7 @@ def load():
             DB["sistemas"] = j.get("sistemas") or {}
             if j.get("tick_global"): DB["tick_global"] = j["tick_global"]
             if j.get("thargoides"): DB["thargoides"] = j["thargoides"]
-            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales"):   # v8 / v9 / v10
+            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos"):   # v8 / v9 / v10 / v11
                 if j.get(k_): DB[k_] = j[k_]
     except (OSError, ValueError):
         pass
@@ -65,6 +67,13 @@ def iso2epoch(s):
     except (TypeError, ValueError):
         return 0
 
+FEL_ES = {1: "Eufórica", 2: "Contenta", 3: "Descontenta", 4: "Infeliz", 5: "Desesperada"}
+
+def fel(h):
+    """v11: felicidad de una faccion ($Faction_HappinessBand2;) -> 1 (euforica) .. 5 (desesperada)"""
+    m_ = _re.search(r"Band(\d)", h or "") if h else None
+    return int(m_.group(1)) if m_ else None
+
 def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
     """facs: lista de dicts con Name, Influence (0..1), FactionState, ActiveStates... (formato journal)."""
     facs = sorted(facs, key=lambda x: -(x.get("Influence") or 0))
@@ -77,7 +86,7 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
                 fill["todas"] = [{"n": x.get("Name"), "inf": round((x.get("Influence") or 0) * 100, 2), "gov": x.get("Government") or "",
                                   "alg": x.get("Allegiance") or "", "act": [y.get("State") for y in x.get("ActiveStates") or [] if y.get("State")],
                                   "pend": [y.get("State") for y in x.get("PendingStates") or [] if y.get("State")],
-                                  "jug": x.get("isPlayer")} for x in facs if (x.get("Influence") or 0) > 0]
+                                  "jug": x.get("isPlayer"), "fel": fel(x.get("Happiness"))} for x in facs if (x.get("Influence") or 0) > 0]
                 fill["ctrl_n"] = ctrl_name or ""
             for k_ in ("pos", "sis", "pp"):
                 if not old.get(k_) and (extra or {}).get(k_):
@@ -111,15 +120,19 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
                "todas": [{"n": x.get("Name"), "inf": round((x.get("Influence") or 0) * 100, 2), "gov": x.get("Government") or "",
                           "alg": x.get("Allegiance") or "", "act": [y.get("State") for y in x.get("ActiveStates") or [] if y.get("State")],
                           "pend": [y.get("State") for y in x.get("PendingStates") or [] if y.get("State")],
-                          "jug": x.get("isPlayer")} for x in facs if (x.get("Influence") or 0) > 0],
-               "ctrl_n": ctrl_name or ""}
+                          "jug": x.get("isPlayer"), "fel": fel(x.get("Happiness"))} for x in facs if (x.get("Influence") or 0) > 0],
+               "ctrl_n": ctrl_name or "", "fel": fel(me.get("Happiness"))}
+        if new["fel"] is None and (old or {}).get("fel"):
+            new["fel"] = old["fel"]                      # EDSM no siempre la trae
         for k_ in ("pos", "sis", "pp"):                  # lo que no traiga este dato se conserva del anterior
             v_ = (extra or {}).get(k_) or (old or {}).get(k_)
             if v_:
                 new[k_] = v_
-        for k_ in ("trafico", "zc", "pn", "tk", "thargoid", "saltos", "rutas", "estaciones", "cseg", "sube_cuando_baja"):  # actividad: siempre se conserva
+        for k_ in ("trafico", "zc", "pn", "tk", "thargoid", "saltos", "rutas", "estaciones", "cseg", "sube_cuando_baja",
+                   "hsis", "hdia", "asent"):  # actividad (v11: hsis, hdia, asent): siempre se conserva
             if (old or {}).get(k_):
                 new[k_] = old[k_]
+        cambio_sis(sysname, old, new, t, src)            # v11: poblacion y seguridad
         if old and old.get("inf") is not None and abs(old["inf"] - inf) >= 0.01:
             new["prev"], new["prev_t"] = old["inf"], old.get("t")
         elif old:
@@ -353,6 +366,13 @@ def avisos(sysname, old, new):
     for r_ in new.get("rivales") or []:                  # v8: rival que sube 3 ticks seguidos
         if r_["racha"] == 3 and (old.get("rach") or {}).get(r_["n"], 0) == 2 and r_["dif"] > -15:
             discord(f"⬆️ **{sysname}**: **{r_['n']}** lleva 3 ticks seguidos subiendo ({r_['inf']:.1f} %, {r_['dif']:+.1f} sobre nosotros)".replace(".", ","))
+    o_ret = {x.get("n") for x in old.get("todas") or [] if "Retreat" in (x.get("act") or []) + (x.get("pend") or [])}
+    for x in new.get("todas") or []:                     # v11: otra faccion en retirada = hueco para nosotros
+        if x["n"] != FAC and "Retreat" in (x.get("act") or []) + (x.get("pend") or []) and x["n"] not in o_ret and new.get("src") == "EDDN":
+            discord(f"🏃 **{sysname}**: **{x['n']}** en retirada ({x['inf']:.1f} %) · si sale, queda hueco".replace(".", ","))
+    fo, fn = old.get("fel"), new.get("fel")              # v11: felicidad de CDSN
+    if fo and fn and fn >= 3 > fo:
+        discord(f"😟 **{sysname}**: la población de **{FAC}** está {FEL_ES.get(fn, fn).lower()} (antes {FEL_ES.get(fo, fo).lower()})")
     for k, lab in (("pendientes", "pendiente"), ("activos", "activo")):
         for st_ in set(new.get(k) or []) - set(old.get(k) or []):
             if st_ in ("Retreat", "Expansion", "War", "CivilWar", "Election"):
@@ -397,7 +417,7 @@ def gh_loop():
                 h = hashlib.md5((json.dumps(DB["sistemas"], sort_keys=True) + str(DB.get("tick_global")) + json.dumps(DB.get("thargoides"), sort_keys=True)
                                  + json.dumps(DB.get("expansion"), sort_keys=True) + json.dumps(DB.get("codice"), sort_keys=True)
                                  + json.dumps(DB.get("ataques"), sort_keys=True) + json.dumps(DB.get("conflictos_hist"), sort_keys=True)
-                                 + json.dumps(DB.get("rivales"), sort_keys=True)).encode()).hexdigest()
+                                 + json.dumps(DB.get("rivales"), sort_keys=True) + json.dumps(DB.get("vecinos"), sort_keys=True)).encode()).hexdigest()
                 body = json.dumps(DB, ensure_ascii=False, indent=1)
             if h != last_h or time.time() - last_t > 6 * 3600:
                 hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
@@ -590,7 +610,10 @@ def saltos(sname, mine, t):
         s = {int(k): v for k, v in (mine.get("saltos") or {}).items()}
         s[h] = s.get(h, 0) + 1
         s = dict(sorted(s.items())[-48:])
-        mine["saltos"] = {str(k): v for k, v in s.items()}; dirty[0] = True
+        mine["saltos"] = {str(k): v for k, v in s.items()}
+        hd = {k: list(v) for k, v in (mine.get("hdia") or {}).items()}   # v11: saltos por dia y hora UTC, 14 dias
+        L_ = hd.setdefault(_dia(t), [0] * 24); L_[time.gmtime(t).tm_hour] += 1
+        mine["hdia"] = dict(sorted(hd.items())[-14:]); dirty[0] = True
     cur = s.get(h, 0)
     media = sum(s.get(h - 3600 * k, 0) for k in range(1, 25)) / 24
     if cur == max(10, math.ceil(3 * media)) and time.time() - t < 7200 and time.time() - _pico.get(sname, 0) > 6 * 3600:
@@ -609,8 +632,14 @@ def rutas(m, t):
             r_ = dict(mine.get("rutas") or {}); r_[_dia(t)] = r_.get(_dia(t), 0) + 1
             mine["rutas"] = dict(sorted(r_.items())[-8:]); dirty[0] = True
 
+def limpia_eco(x):
+    return _re.sub(r"^\$economy_|;$", "", x or "").replace("_", " ")
+
 def _es_portanaves(nm, tipo=""):
     return tipo == "FleetCarrier" or bool(CALLSIGN.fullmatch(nm or ""))
+
+EST_ES = {"UnderRepairs": "En reparación", "Damaged": "Dañada", "Abandoned": "Abandonada", "UnderAttack": "Bajo ataque",
+          "Construction": "En construcción", "Evacuated": "Evacuada"}
 
 def estacion(sname, m, mine, t):
     """Docked / Location atracado: dueño, tipo, distancia, plataformas y estado de la estacion."""
@@ -624,14 +653,25 @@ def estacion(sname, m, mine, t):
         if o.get("t", 0) > t:
             return
         e = dict(o)
-        e.update({"f": f or o.get("f") or "", "tipo": m.get("StationType") or o.get("tipo") or "", "t": t,
-                  "estado": m.get("StationState") or ""})
+        e.update({"f": f or o.get("f") or "", "tipo": m.get("StationType") or o.get("tipo") or "", "t": t})
+        if m.get("event") == "Docked":                    # v11: el estado solo lo trae bien el Docked
+            if (m.get("StationState") or "") != (o.get("estado") or ""):
+                e["estado_t"] = t
+            e["estado"] = m.get("StationState") or ""
+        if m.get("StationServices"): e["serv"] = len(m["StationServices"])
+        ec = m.get("StationEconomies") or []
+        if ec: e["eco"] = ec[0].get("Name_Localised") or limpia_eco(ec[0].get("Name"))
         if m.get("DistFromStarLS") is not None: e["ls"] = round(m["DistFromStarLS"])
         if m.get("LandingPads"): e["pads"] = m["LandingPads"]
         if m.get("MarketID"): e["mid"] = m["MarketID"]
         E[nm] = e; dirty[0] = True
     if e.get("mid") and not o.get("mid"):
         NAMES["t"] = 0
+    eo, en = o.get("estado") or "", e.get("estado") or ""
+    if m.get("event") == "Docked" and o and eo != en and (e.get("f") == FAC or en in ("UnderAttack", "Damaged")):
+        txt = (f"🏚️ **{sname}**: la estación **{nm}** está {EST_ES.get(en, en).lower()}" if en
+               else f"🏗️ **{sname}**: la estación **{nm}** vuelve a la normalidad (antes {EST_ES.get(eo, eo).lower()})")
+        log(txt.replace("**", "")); discord(txt)
     of = o.get("f")
     if of and f and of != f and FAC in (of, f):
         txt = (f"🏳️ **{sname}**: **{FAC}** gana la estación **{nm}** (antes de {of})" if f == FAC
@@ -724,6 +764,111 @@ def codice(m, t):
                   "cuerpo": m.get("BodyName") or "", "junto": mc[1], "ly": round(mc[0], 1), "t": t})
         DB["codice"] = sorted(L, key=lambda x: -(x.get("t") or 0))[:30]; dirty[0] = True
 
+# ---------- v11: alrededor y mas detalle ----------
+# - "vecinos" (raiz): sistemas a menos de vecinos_ly (30 al) con facciones en expansion o retirada,
+#   y a cuales de nuestros sistemas puede llegar cada expansion (menos de 7 facciones, a menos de expansion_ly).
+# - "hsis" (sistema): cambios de poblacion y seguridad; "asent" (sistema): asentamientos de Odyssey y su dueño.
+SEG_N = {"$SYSTEM_SECURITY_high;": 3, "$SYSTEM_SECURITY_medium;": 2, "$SYSTEM_SECURITY_low;": 1,
+         "$GAlAXY_MAP_INFO_state_anarchy;": 0, "$GALAXY_MAP_INFO_state_anarchy;": 0, "$GALAXY_MAP_INFO_state_lawless;": 0}
+SEG_ES = {3: "alta", 2: "media", 1: "baja", 0: "sin ley"}
+_vec_avisado = {}                # (faccion, sistema) -> hora del ultimo aviso de expansion
+
+def cambio_sis(sysname, old, new, t, src):
+    """Se llama con el cerrojo cogido. Apunta los cambios de poblacion y seguridad (los 10 ultimos)."""
+    if src != "EDDN" or (old or {}).get("src") != "EDDN":   # EDSM escribe la seguridad de otra forma
+        return
+    a, b = (old or {}).get("sis") or {}, new.get("sis") or {}
+    if not a or not b or (a.get("pob") == b.get("pob") and a.get("seg") == b.get("seg")):
+        return
+    if b.get("pob") is None or b.get("seg") is None:
+        return
+    h = [list(x) for x in new.get("hsis") or []]
+    if not h and a.get("pob") is not None:
+        h.append([int((old or {}).get("t") or t), a.get("pob"), a.get("seg")])
+    h.append([int(t), b.get("pob"), b.get("seg")])
+    new["hsis"] = h[-10:]
+    so, sn = SEG_N.get(a.get("seg")), SEG_N.get(b.get("seg"))
+    if so is not None and sn is not None and so != sn:
+        discord(f"{'🔻' if sn < so else '🔺'} **{sysname}**: la seguridad pasa de {SEG_ES[so]} a **{SEG_ES[sn]}**")
+    if a.get("pob") and b.get("pob") and abs(b["pob"] - a["pob"]) >= 0.05 * a["pob"]:
+        discord(f"👥 **{sysname}**: la población cambia un {100 * (b['pob'] - a['pob']) / a['pob']:+.0f} %".replace(".", ","))
+
+def asentamiento(sname, m, mine, t):
+    """ApproachSettlement: asentamientos de Odyssey en nuestros sistemas y su dueño."""
+    nm = m.get("Name_Localised") or m.get("Name") or ""
+    f = (m.get("StationFaction") or {}).get("Name") or ""
+    if not nm or nm.startswith("$") or not f:
+        return                                           # ruinas, sitios guardianes... (sin dueño)
+    with lock:
+        A = mine.setdefault("asent", {})
+        o = A.get(nm) or {}
+        if o.get("t", 0) > t:
+            return
+        A[nm] = {"f": f, "cuerpo": m.get("BodyName") or o.get("cuerpo") or "", "mid": m.get("MarketID") or o.get("mid"),
+                 "eco": limpia_eco((m.get("StationEconomy") or "")) or o.get("eco") or "", "t": t}
+        if len(A) > 40:                                  # los 40 mas recientes
+            for k in sorted(A, key=lambda k: A[k].get("t") or 0)[:-40]:
+                A.pop(k, None)
+        dirty[0] = True
+    of = o.get("f")
+    if of and of != f and FAC in (of, f):
+        txt = (f"🏕️ **{sname}**: **{FAC}** gana el asentamiento **{nm}** (antes de {of})" if f == FAC
+               else f"🏕️ **{sname}**: **{FAC}** pierde el asentamiento **{nm}** (ahora es de {f})")
+        log(txt.replace("**", "")); discord(txt)
+
+def vecinos(sname, m, t, propio=False):
+    """Facciones en expansion o retirada en un sistema (nuestro o a menos de vecinos_ly)."""
+    pos, facs = m.get("StarPos"), m.get("Factions") or []
+    if not sname or not pos or None in pos:
+        return
+    if propio:
+        ly, junto = 0.0, sname
+    else:
+        mc = _mas_cerca(pos)
+        if not mc or mc[0] > CFG["vecinos_ly"]:
+            return
+        ly, junto = mc
+    est = lambda x, s_: "act" if s_ in [y.get("State") for y in x.get("ActiveStates") or []] else \
+                        "pend" if s_ in [y.get("State") for y in x.get("PendingStates") or []] else ""
+    exp = [{"n": x["Name"], "inf": round((x.get("Influence") or 0) * 100, 1), "est": est(x, "Expansion")}
+           for x in facs if x.get("Name") and x["Name"] != FAC and est(x, "Expansion")]
+    ret = [{"n": x["Name"], "inf": round((x.get("Influence") or 0) * 100, 1), "est": est(x, "Retreat")}
+           for x in facs if x.get("Name") and x["Name"] != FAC and est(x, "Retreat")]
+    msgs = []
+    with lock:
+        V = DB.setdefault("vecinos", {})
+        o = V.get(sname) or {}
+        if o.get("t", 0) > t:
+            return
+        if not exp and not ret:
+            if V.pop(sname, None):
+                dirty[0] = True
+            return
+        for e_ in exp:                                    # a que sistemas nuestros puede llegar
+            obj = []
+            for n, v in DB["sistemas"].items():
+                if n == sname or v.get("fuera") or not v.get("pos") or None in v["pos"]:
+                    continue
+                d_ = math.dist(pos, v["pos"])
+                noms = {x.get("n") for x in v.get("todas") or []}
+                if d_ <= CFG["expansion_ly"] and len(noms) < 7 and e_["n"] not in noms:
+                    obj.append([n, round(d_, 1)])
+            e_["obj"] = sorted(obj, key=lambda x: x[1])[:12]
+        V[sname] = {"pos": pos, "ly": round(ly, 1), "junto": junto, "propio": propio, "nfac": len(facs),
+                    "exp": exp, "ret": ret, "t": t}
+        dirty[0] = True
+        o_exp = {x["n"] for x in o.get("exp") or []}
+        for e_ in exp:
+            k_ = (e_["n"], sname)
+            if e_["n"] not in o_exp and e_["obj"] and time.time() - t < 6 * 3600 and time.time() - _vec_avisado.get(k_, 0) > 86400:
+                _vec_avisado[k_] = time.time()
+                donde = "" if propio else f" (a {ly:.0f} al de **{junto}**)"
+                msgs.append(f"🛸 **{e_['n']}** prepara una expansión desde **{sname}**{donde} · puede llegar a "
+                            + ", ".join(f"{n} ({d:.0f} al)" for n, d in e_["obj"][:5])
+                            + (f" y {len(e_['obj']) - 5} más" if len(e_["obj"]) > 5 else ""))
+    for m_ in msgs:
+        log(m_.replace("**", "")); discord(m_)
+
 def process(pkt):
     hit = next((n for b_, n in mis_sistemas() if b_ in pkt), None)
     pp_ = b'"ControllingPower"' in pkt or b'"Powers"' in pkt
@@ -764,6 +909,9 @@ def process(pkt):
                 tr_.update({k: len(v) for k, v in dd.items()})
                 mine["trafico"] = dict(sorted(tr_.items())[-31:])
                 dirty[0] = True
+    if "/approachsettlement/" in sch:                    # v11: asentamientos de Odyssey
+        if mine and not mine.get("fuera"): asentamiento(sname, m, mine, t)
+        return
     # senales: zonas de conflicto y portanaves
     if mine and "/fsssignaldiscovered/" in sch:
         for sg in m.get("signals") or []:
@@ -799,6 +947,7 @@ def process(pkt):
         saltos(sname, mine, t)                            # v8: saltos por hora
     if not vivo and m.get("Factions") and FAC_B not in pkt:
         expansion(sname, m, t)                            # v8: candidatos para expandirse
+        vecinos(sname, m, t)                              # v11: expansiones y retiradas de alrededor
     thargoides(sname, m, mine, t)                         # guerra thargoide (v7)
     # Powerplay de los sistemas a menos de 20 al de los tuyos
     if (m.get("ControllingPower") or m.get("Powers")) and cerca(m.get("StarPos")):
@@ -821,6 +970,7 @@ def process(pkt):
                  "pots": m.get("Powers") or []}}
     if update(sname, t, m["Factions"], (m.get("SystemFaction") or {}).get("Name"), "EDDN", m.get("Conflicts"), ex):
         DB["eddn"]["mios"] += 1; DB["eddn"]["ultimo"] = time.time()
+        vecinos(sname, m, t, propio=True)                 # v11: otras facciones que se expanden desde aqui
         s_ = DB["sistemas"][sname]
         log(f"EDDN {sname}: {s_['inf']:.1f}% {'(controla)' if s_['ctrl'] else ''} {' '.join(s_['activos'] + s_['pendientes'])}")
 
@@ -866,7 +1016,7 @@ def edsm_one(name):
     t = max(f.get("lastUpdate") or 0 for f in fs)
     conv = lambda L: [{"State": x.get("state")} for x in L or []]
     facs = [{"Name": f.get("name"), "Influence": f.get("influence") or 0, "FactionState": f.get("state"),
-             "Government": f.get("government"), "Allegiance": f.get("allegiance"), "isPlayer": f.get("isPlayer"),
+             "Government": f.get("government"), "Allegiance": f.get("allegiance"), "isPlayer": f.get("isPlayer"), "Happiness": f.get("happiness"),
              "ActiveStates": conv(f.get("activeStates")), "PendingStates": conv(f.get("pendingStates")),
              "RecoveringStates": conv(f.get("recoveringStates"))} for f in fs]
     ex = None
@@ -1139,6 +1289,9 @@ def saver_loop():
                 rv_ = DB.get("rivales") or {}                    # v10: rivales sin noticias en 60 dias
                 for k in [k for k, v in rv_.items() if time.time() - (v.get("ult") or 0) > 60 * 86400]:
                     rv_.pop(k, None)
+                vz_ = DB.get("vecinos") or {}                    # v11: expansiones/retiradas sin noticias en 10 dias
+                for k in [k for k, v in vz_.items() if time.time() - (v.get("t") or 0) > 10 * 86400]:
+                    vz_.pop(k, None)
                 ez_ = DB.get("expansion") or {}                  # v8: candidatos sin noticias en 14 dias
                 for k in [k for k, v in ez_.items() if time.time() - (v.get("t") or 0) > 14 * 86400]:
                     ez_.pop(k, None)

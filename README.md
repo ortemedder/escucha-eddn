@@ -63,6 +63,7 @@ systemctl restart escucha-eddn
 - v9: posibles ataques: si un sistema tiene pico de visitas (hoy o ayer ≥ 5 pilotos y ≥ 3 veces la media de 7 días) y la influencia baja ≥ 1 punto, avisa por Discord; al terminar avisa si la influencia se recuperó y lo guarda en `ataques.hist` (los 30 últimos) de faccion.json. El tráfico guarda ahora 9 días.
 
 - v10: conflictos día a día: día del conflicto (1–7), fase (DEFENSA EN CURSO, DISPUTADO, DÍA DECISIVO, SISTEMA EN DERROTA...), qué se juega hoy, resultado de cada día y lo que hay en juego; historial de conflictos (`conflictos_hist`); quién sube cuando bajamos (`sube_cuando_baja`) y rivales vigilados (`rivales`); avisos de todo eso por Discord. Con un conflicto activo, las visitas ya no lanzan POSIBLE ATAQUE. EDSM ya no borra los conflictos que vio EDDN. Las visitas (`trafico`) se guardan 31 días.
+- v11: expansiones y retiradas de otras facciones en nuestros sistemas y a menos de 30 al (`vecinos`), con aviso si una expansión puede llegar a uno nuestro; felicidad de cada facción (`fel`); estado de las estaciones (dañada, bajo ataque...); cambios de población y seguridad (`hsis`); saltos por día y hora (`hdia`, 14 días) para el mapa de horas; asentamientos de Odyssey (`asent`). Todo con avisos a Discord.
 
 Todos los campos de `faccion.json` están explicados en [DATOS.md](DATOS.md).
 
