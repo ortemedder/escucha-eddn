@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11"                  # v11: expansiones y retiradas de alrededor, felicidad, estado de estaciones,
+VERSION = "v11.1"                # v11.1: obras (construction sites) en nuestros sistemas: aviso al aparecer y al terminarse
+                                 # v11: expansiones y retiradas de alrededor, felicidad, estado de estaciones,
                                  #      cambios de poblacion y seguridad, saltos por hora (14 dias) y asentamientos
                                  # v10: dia y fase de cada conflicto, resultado diario, en juego, historial de conflictos,
                                  #      quien sube cuando bajamos, vigilancia de rivales y avisos de conflicto a Discord
@@ -641,6 +642,12 @@ def _es_portanaves(nm, tipo=""):
 EST_ES = {"UnderRepairs": "En reparación", "Damaged": "Dañada", "Abandoned": "Abandonada", "UnderAttack": "Bajo ataque",
           "Construction": "En construcción", "Evacuated": "Evacuada"}
 
+def _obra(nm, tipo):
+    """v11.1: nombre final de la obra ('Planetary Construction Site: X' -> 'X') o None si no es una obra"""
+    if "ConstructionDepot" in (tipo or "") or "Construction Site" in (nm or ""):
+        return nm.split(":", 1)[1].strip() if ":" in nm else nm
+    return None
+
 def estacion(sname, m, mine, t):
     """Docked / Location atracado: dueño, tipo, distancia, plataformas y estado de la estacion."""
     nm = m.get("StationName")
@@ -664,7 +671,23 @@ def estacion(sname, m, mine, t):
         if m.get("DistFromStarLS") is not None: e["ls"] = round(m["DistFromStarLS"])
         if m.get("LandingPads"): e["pads"] = m["LandingPads"]
         if m.get("MarketID"): e["mid"] = m["MarketID"]
+        fin_ = _obra(nm, e.get("tipo"))                  # v11.1: obras
+        nueva_obra, terminada = False, None
+        if fin_:
+            e["obra"] = fin_
+            nueva_obra = not o and not any(x.get("obra") == fin_ for k_, x in E.items() if k_ != nm)
+        else:
+            e.pop("obra", None)
+            for k_, x in list(E.items()):                # la estacion terminada sustituye a su obra
+                if x.get("obra") == nm and k_ != nm:
+                    E.pop(k_, None); terminada = k_
         E[nm] = e; dirty[0] = True
+    if nueva_obra and time.time() - t < 3 * 86400:
+        txt = f"🏗️ **{sname}**: nueva obra **{fin_}** ({'planetaria' if 'Planetary' in (e.get('tipo') or nm) else 'orbital'})"
+        log(txt.replace("**", "")); discord(txt)
+    if terminada:
+        txt = f"🎉 **{sname}**: terminada la obra **{nm}** · ahora es de **{f or '?'}**"
+        log(txt.replace("**", "")); discord(txt)
     if e.get("mid") and not o.get("mid"):
         NAMES["t"] = 0
     eo, en = o.get("estado") or "", e.get("estado") or ""
