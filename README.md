@@ -83,6 +83,7 @@ systemctl restart escucha-eddn
 - v11.4: relleno automático cada 15 días (a las 4:00) con el archivo de EDDN: tapa los huecos de los cortes sin parar el escucha y avisa por Discord. Necesita `relleno_eddn.py` en la misma carpeta. Se cambia con `relleno_dias` y `relleno_hora` en config.json (`relleno_dias: 0` lo apaga).
 - v11.5: el relleno pasa a ser **semanal, los viernes a las 7:00**, con los últimos 8 días (`relleno_dia` 0 lunes … 6 domingo, -1 nunca; `relleno_hora`; `relleno_atras`). **A mano:** `touch /root/elite/escucha-eddn/relleno_ya` (o `echo 30 > relleno_ya` para 30 días) y en menos de un minuto empieza; al acabar avisa por Discord.
 - v11.6: cada aviso de Discord se guarda también en `noticias` (los 300 últimos, con hora, sección, si es urgente y sistema) para La Crónica de Sion de la web. Se guarda aunque no haya webhook de Discord.
+- v11.7: cada 15 min mira `noticia_fija.txt` de cdsn-datos (la noticia fija que se escribe a mano); al cambiarla o quitarla, la anterior pasa a la `hemeroteca` con sus fechas, y avisa por Discord de cada noticia fija nueva.
 
 Todos los campos de `faccion.json` están explicados en [DATOS.md](DATOS.md).
 
