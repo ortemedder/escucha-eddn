@@ -78,6 +78,7 @@ def lineas(url):
 def procesa_dia(d, tipos, sistemas, R, base):
     """Lee los mensajes de un dia y apunta lo de nuestros sistemas en R."""
     vistos, faltan = 0, 0
+    t_dia = epoch(d + "T12:00:00")
     for tipo in tipos:
         url = f"{base}/{d[:7]}/Journal.{tipo}-{d}.jsonl.bz2"
         print(f"   {tipo}: {url}")
@@ -101,7 +102,7 @@ def procesa_dia(d, tipos, sistemas, R, base):
                 if gv.startswith("3.") or "legacy" in gv.lower() or "/test" in (e.get("$schemaRef") or ""):
                     continue                             # galaxia antigua o pruebas (igual que el escucha)
                 t = epoch(msg.get("timestamp")) or epoch(hdr.get("gatewayTimestamp"))
-                if not t:
+                if not t or abs(t - t_dia) > 36 * 3600:   # fecha basura (reloj mal o journal antiguo)
                     continue
                 s = R.setdefault(nombre, {"trafico": {}, "hdia": {}, "inf": []})
                 dd = dia(t)
@@ -228,7 +229,8 @@ def mezclar(a):
         for d, ids in r.get("trafico", {}).items():
             if len(ids) > tr.get(d, 0):
                 tr[d] = len(ids); tot["traf"] += 1
-        s["trafico"] = dict(sorted(tr.items())[-DIAS_TRAF:])
+        lim = (datetime.now(timezone.utc).date() - timedelta(days=DIAS_TRAF)).isoformat()
+        s["trafico"] = dict(sorted((k, v) for k, v in tr.items() if k > lim))   # fuera las fechas basura y lo de mas de 60 dias
         # los ids de los ultimos 9 dias tambien van a trafico.json, para que el escucha siga contando bien hoy
         if TRAF is not None:
             dd = TRAF.setdefault(n, {})
@@ -244,7 +246,8 @@ def mezclar(a):
             nuevo = [max(x, y) for x, y in zip(o, h)]
             if nuevo != o:
                 hd[d] = nuevo; tot["hdia"] += 1
-        s["hdia"] = dict(sorted(hd.items())[-DIAS_HDIA:])
+        lim = (datetime.now(timezone.utc).date() - timedelta(days=DIAS_HDIA)).isoformat()
+        s["hdia"] = dict(sorted((k, v) for k, v in hd.items() if k > lim))
         # historico de influencia: se juntan los cambios del archivo con los que ya habia (tambien en los huecos)
         h = [list(x) for x in s.get("hinf") or []]
         nuevo = juntar_hinf(h, r.get("inf", []))
