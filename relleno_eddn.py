@@ -77,7 +77,7 @@ def lineas(url):
 
 def procesa_dia(d, tipos, sistemas, R, base):
     """Lee los mensajes de un dia y apunta lo de nuestros sistemas en R."""
-    vistos = 0
+    vistos, faltan = 0, 0
     for tipo in tipos:
         url = f"{base}/{d[:7]}/Journal.{tipo}-{d}.jsonl.bz2"
         print(f"   {tipo}: {url}")
@@ -122,9 +122,12 @@ def procesa_dia(d, tipos, sistemas, R, base):
                 vistos += 1
         except urllib.error.HTTPError as e:
             print(f"      no está ({e.code}); se salta")
+            faltan += 1
         except Exception as e:                           # corte de red: se cuenta como no hecho
             print(f"      fallo: {e}")
             return None
+    if faltan == len(tipos):
+        return -1                                        # el archivo aun no ha publicado ese dia
     return vistos
 
 
@@ -138,6 +141,11 @@ def descargar(a):
     if os.path.exists(a.salida) and not a.rehacer:
         with open(a.salida, encoding="utf-8") as f:
             R = json.load(f)
+        con = {d for x in R["sistemas"].values() for d in x.get("trafico", {})}   # dias que de verdad trajeron datos
+        vacios = [d for d in R["hechos"] if d not in con]
+        if vacios:                                       # versiones anteriores daban por hechos los dias aun no publicados
+            R["hechos"] = [d for d in R["hechos"] if d in con]
+            print(f"{len(vacios)} días sin datos se volverán a intentar: {', '.join(vacios)}")
         print(f"Sigo donde lo dejé: {len(R['hechos'])} días ya hechos")
     t0 = time.time()
     for k, d in enumerate(dias, 1):
@@ -148,13 +156,16 @@ def descargar(a):
         if n is None:
             print("   se ha cortado: vuelve a lanzar el script y seguirá por este día")
             break
+        if n == -1:
+            print("   ese día aún no está en el archivo (lo publican con retraso); se intentará la próxima vez")
+            continue
         R["hechos"].append(d)
         tmp = a.salida + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(R, f, ensure_ascii=False, separators=(",", ":"))
         os.replace(tmp, a.salida)
         print(f"   {n} mensajes de nuestros sistemas · llevas {(time.time() - t0) / 60:.0f} min")
-    print(f"\nHecho: {len(R['hechos'])} de {len(dias)} días en {a.salida} ({os.path.getsize(a.salida) // 1024} KB).")
+    print(f"\nHecho: {len(R['hechos'])} de {len(dias)} días en {a.salida} ({os.path.getsize(a.salida) // 1024 if os.path.exists(a.salida) else 0} KB).")
     print("Ahora pásalo a la Orange Pi y haz el paso 2 (mezclar).")
 
 
