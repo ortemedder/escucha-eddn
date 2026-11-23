@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.3"                # v11.3: faccion.json compacto en GitHub, historico de influencia de 60 cambios y mapa de horas de 28 dias
+VERSION = "v11.3"                # v11.3: faccion.json compacto en GitHub, historico de influencia de 60 cambios y mapa de horas de 28 dias,
+                                 #        visitas (trafico) de 60 dias
                                  # v11.2: CDSN con 0 % de influencia (EDSM la sigue listando) cuenta como "ya no esta"
                                  # v11.1: obras (construction sites) en nuestros sistemas: aviso al aparecer y al terminarse
                                  # v11: expansiones y retiradas de alrededor, felicidad, estado de estaciones,
@@ -931,10 +932,10 @@ def process(pkt):
             ids.add(uid)
             for old_ in sorted(dd)[:-9]:                 # 9 dias: hoy, ayer y 7 para la media del pico
                 dd.pop(old_, None)
-            with lock:                                   # v10: los numeros se guardan 31 dias (los ids solo 9)
+            with lock:                                   # v11.3: los numeros se guardan 60 dias (los ids solo 9)
                 tr_ = dict(mine.get("trafico") or {})
                 tr_.update({k: len(v) for k, v in dd.items()})
-                mine["trafico"] = dict(sorted(tr_.items())[-31:])
+                mine["trafico"] = dict(sorted(tr_.items())[-60:])
                 dirty[0] = True
     if "/approachsettlement/" in sch:                    # v11: asentamientos de Odyssey
         if mine and not mine.get("fuera"): asentamiento(sname, m, mine, t)

@@ -66,7 +66,7 @@ systemctl restart escucha-eddn
 - v11: expansiones y retiradas de otras facciones en nuestros sistemas y a menos de 30 al (`vecinos`), con aviso si una expansión puede llegar a uno nuestro; felicidad de cada facción (`fel`); estado de las estaciones (dañada, bajo ataque...); cambios de población y seguridad (`hsis`); saltos por día y hora (`hdia`, 14 días) para el mapa de horas; asentamientos de Odyssey (`asent`). Todo con avisos a Discord.
 - v11.1: obras (*Construction Site*) en nuestros sistemas: campo `obra` en la estación y avisos de obra nueva y obra terminada.
 - v11.2: si CDSN sale con 0 % de influencia (EDSM la sigue listando), cuenta como que ya no está en el sistema.
-- v11.3: `faccion.json` se sube compacto (sin espacios, un 35 % menos); histórico de influencia de 60 cambios y mapa de horas de 28 días.
+- v11.3: `faccion.json` se sube compacto (sin espacios, un 35 % menos); histórico de influencia de 60 cambios, mapa de horas de 28 días y visitas de 60 días.
 
 Todos los campos de `faccion.json` están explicados en [DATOS.md](DATOS.md).
 
