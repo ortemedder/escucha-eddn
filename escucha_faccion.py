@@ -4,7 +4,9 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.2"                # v11.2: CDSN con 0 % de influencia (EDSM la sigue listando) cuenta como "ya no esta"
+VERSION = "v11.3"                # v11.3: faccion.json compacto en GitHub, historico de influencia de 60 cambios y mapa de horas de 28 dias,
+                                 #        visitas (trafico) de 60 dias
+                                 # v11.2: CDSN con 0 % de influencia (EDSM la sigue listando) cuenta como "ya no esta"
                                  # v11.1: obras (construction sites) en nuestros sistemas: aviso al aparecer y al terminarse
                                  # v11: expansiones y retiradas de alrededor, felicidad, estado de estaciones,
                                  #      cambios de poblacion y seguridad, saltos por hora (14 dias) y asentamientos
@@ -141,7 +143,7 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
             new["prev"], new["prev_t"] = old["inf"], old.get("t")
         elif old:
             new["prev"], new["prev_t"] = old.get("prev"), old.get("prev_t")
-        # historico de influencia (v5): un punto cada vez que cambia, los ultimos 14
+        # historico de influencia (v5): un punto cada vez que cambia, los ultimos 60 (v11.3)
         h = [list(x) for x in (old or {}).get("hinf") or []]
         if not h and old and old.get("inf") is not None:
             if old.get("prev") is not None and old.get("prev_t"):
@@ -149,7 +151,7 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
             h.append([int(old.get("t") or t), old["inf"]])
         if not h or abs(h[-1][1] - inf) >= 0.01:
             h.append([int(t), inf])
-        new["hinf"] = h[-14:]
+        new["hinf"] = h[-60:]                            # v11.3: 60 cambios (antes 14)
         # rivales (v8): ticks seguidos que sube cada faccion del sistema
         rach = dict((old or {}).get("rach") or {})
         o_inf = {x.get("n"): x.get("inf") or 0 for x in (old or {}).get("todas") or []}
@@ -422,7 +424,7 @@ def gh_loop():
                                  + json.dumps(DB.get("expansion"), sort_keys=True) + json.dumps(DB.get("codice"), sort_keys=True)
                                  + json.dumps(DB.get("ataques"), sort_keys=True) + json.dumps(DB.get("conflictos_hist"), sort_keys=True)
                                  + json.dumps(DB.get("rivales"), sort_keys=True) + json.dumps(DB.get("vecinos"), sort_keys=True)).encode()).hexdigest()
-                body = json.dumps(DB, ensure_ascii=False, indent=1)
+                body = json.dumps(DB, ensure_ascii=False, separators=(",", ":"))   # v11.3: compacto (un 35 % menos)
             if h != last_h or time.time() - last_t > 6 * 3600:
                 hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
                        "User-Agent": "PanelEliteRPi-escucha/1.0", "X-GitHub-Api-Version": "2022-11-28"}
@@ -615,9 +617,9 @@ def saltos(sname, mine, t):
         s[h] = s.get(h, 0) + 1
         s = dict(sorted(s.items())[-48:])
         mine["saltos"] = {str(k): v for k, v in s.items()}
-        hd = {k: list(v) for k, v in (mine.get("hdia") or {}).items()}   # v11: saltos por dia y hora UTC, 14 dias
+        hd = {k: list(v) for k, v in (mine.get("hdia") or {}).items()}   # v11: saltos por dia y hora UTC (28 dias desde v11.3)
         L_ = hd.setdefault(_dia(t), [0] * 24); L_[time.gmtime(t).tm_hour] += 1
-        mine["hdia"] = dict(sorted(hd.items())[-14:]); dirty[0] = True
+        mine["hdia"] = dict(sorted(hd.items())[-28:]); dirty[0] = True   # v11.3: 28 dias
     cur = s.get(h, 0)
     media = sum(s.get(h - 3600 * k, 0) for k in range(1, 25)) / 24
     if cur == max(10, math.ceil(3 * media)) and time.time() - t < 7200 and time.time() - _pico.get(sname, 0) > 6 * 3600:
@@ -930,10 +932,10 @@ def process(pkt):
             ids.add(uid)
             for old_ in sorted(dd)[:-9]:                 # 9 dias: hoy, ayer y 7 para la media del pico
                 dd.pop(old_, None)
-            with lock:                                   # v10: los numeros se guardan 31 dias (los ids solo 9)
+            with lock:                                   # v11.3: los numeros se guardan 60 dias (los ids solo 9)
                 tr_ = dict(mine.get("trafico") or {})
                 tr_.update({k: len(v) for k, v in dd.items()})
-                mine["trafico"] = dict(sorted(tr_.items())[-31:])
+                mine["trafico"] = dict(sorted(tr_.items())[-60:])
                 dirty[0] = True
     if "/approachsettlement/" in sch:                    # v11: asentamientos de Odyssey
         if mine and not mine.get("fuera"): asentamiento(sname, m, mine, t)
