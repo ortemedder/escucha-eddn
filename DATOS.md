@@ -3,7 +3,7 @@
 Qué saca el escucha de EDDN (y de EDSM y tick.edcd.io), qué guarda en `faccion.json` y quién lo usa.
 **Si se añade un campo nuevo al escucha, se apunta aquí.**
 
-`faccion.json` está en [cdsn-datos](https://github.com/ortemedder/cdsn-datos) (se sube cada 15 min si cambia) y en la red de casa en `http://IP:8090/faccion.json`.
+`faccion.json` está en [cdsn-datos](https://github.com/ortemedder/cdsn-datos) (se sube cada 15 min si cambia, en JSON compacto desde la v11.3) y en la red de casa en `http://IP:8090/faccion.json`.
 Lo leen: radar-cdsn (ESP32), cdsn-web, panel-elite y escucha-s3.
 
 Horas: siempre en **segundos UTC** (epoch). Influencias: en **%** (0–100, con 2 decimales). Días: `AAAA-MM-DD` en UTC.
@@ -60,7 +60,7 @@ Lo que **no** da EDDN: quién es cada piloto, el arquitecto de un sistema ni el 
 | `sys`, `t`, `src` | Nombre, hora del dato y fuente (EDDN o EDSM) |
 | `inf` | Influencia de CDSN |
 | `prev`, `prev_t` | Influencia anterior (la última distinta) y su hora |
-| `hinf` | Histórico: `[hora, influencia]`, últimos 14 cambios |
+| `hinf` | Histórico: `[hora, influencia]`, últimos **60** cambios (v11.3; antes 14) |
 | `ctrl`, `ctrl_n` | Si CDSN controla el sistema y quién lo controla |
 | `estado`, `activos`, `pendientes`, `recuperando` | Estados de CDSN (en inglés: War, Election, Expansion, Retreat...) |
 | `segunda`, `segunda_inf` | Segunda facción e influencia |
@@ -109,7 +109,7 @@ Reglas de las fases (las mismas en el escucha, el radar y la web; 7 días como m
 |---|---|
 | `trafico` | Pilotos distintos por día (`AAAA-MM-DD`: número), **31 días** (v10; antes 9). Los ids anónimos de los pilotos solo se guardan 9 días, en `trafico.json` de la Orange Pi (no se sube) |
 | `saltos` | Saltos que llegan por hora (últimas 48 h) |
-| `hdia` | Saltos por día y hora UTC: `AAAA-MM-DD` → 24 números, **14 días** (v11, para el mapa de horas) |
+| `hdia` | Saltos por día y hora UTC: `AAAA-MM-DD` → 24 números, **28 días** (v11; 14 hasta la v11.3) para el mapa de horas |
 | `rutas` | Rutas que pasan por el sistema, por día (8 días) |
 | `zc` | Zonas de conflicto vistas en 24 h: `n`, `i` intensidad (Low/Med/High), `t` |
 | `pn` | Portanaves vistos en 7 días: matrícula → `n` nombre, `t` visto, `d` desde cuándo |
