@@ -50,7 +50,8 @@ Lo que **no** da EDDN: quién es cada piloto, el arquitecto de un sistema ni el 
 | **`conflictos_hist`** | **Últimos 50 conflictos terminados** (ver punto 4) | **v10** |
 | `rivales` | Facciones vigiladas (ver punto 5) | v10 |
 | `relleno` | Último relleno con el archivo de EDDN: `t`, `motivo` (semanal / a mano), `dias`, `visitas`, `horas`, `influencia` (mejorados), `min`, `error` | v11.4 |
-| **`vecinos`** | **Expansiones y retiradas de otras facciones** en nuestros sistemas y a menos de 30 al (ver punto 7) | **v11** |
+| **`noticias`** | **Los 300 últimos avisos (los mismos de Discord), para La Crónica de Sion de la web:** `[hora, texto, sección, urgente 0/1, sistema]`. Secciones: conflictos, expansion, obras, estaciones, poblacion, actividad, thargoides, resumen, escucha, otras | **v11.6** |
+| `vecinos` | **Expansiones y retiradas de otras facciones** en nuestros sistemas y a menos de 30 al (ver punto 7) | **v11** |
 
 ---
 

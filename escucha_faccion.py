@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.5"                # v11.5: relleno semanal (viernes 7:00, ultimos 8 dias) y a mano creando el archivo relleno_ya
+VERSION = "v11.6"                # v11.6: noticias (cada aviso de Discord se guarda para La Cronica de Sion de la web)
+                                 # v11.5: relleno semanal (viernes 7:00, ultimos 8 dias) y a mano creando el archivo relleno_ya
                                  # v11.4.1: el relleno tambien mete la influencia en los huecos del historico;
                                  #          visitas y saltos sin fechas basura (solo +-36 h) y sin dias de mas de 60/28
                                  # v11.4: relleno automatico cada 15 dias con el archivo de EDDN (edgalaxydata.space)
@@ -48,7 +49,7 @@ def load():
             DB["sistemas"] = j.get("sistemas") or {}
             if j.get("tick_global"): DB["tick_global"] = j["tick_global"]
             if j.get("thargoides"): DB["thargoides"] = j["thargoides"]
-            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos", "relleno"):   # v8 / v9 / v10 / v11 / v11.4
+            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos", "relleno", "noticias"):   # v8 / v9 / v10 / v11 / v11.4 / v11.6
                 if j.get(k_): DB[k_] = j[k_]
     except (OSError, ValueError):
         pass
@@ -295,9 +296,45 @@ DQ = []
 
 DQL = threading.Lock()                           # cerrojo propio de la cola de Discord
 
+NQ = []                                          # v11.6: noticias nuevas, pendientes de pasar a DB["noticias"]
+
 def discord(txt):
     with DQL:
         DQ.append([txt, time.time(), 0])                 # texto, cuando se creo, cuando reintentar
+        NQ.append([txt, int(time.time())])               # v11.6: tambien va a La Cronica de Sion (web)
+
+# ---------- v11.6: noticias para La Cronica de Sion ----------
+# Cada aviso se guarda (los 300 ultimos) con su hora, seccion, si es urgente y el sistema al que se refiere.
+SECC = [("🚨", "conflictos"), ("⚔", "conflictos"), ("✉", "conflictos"), ("🏁", "conflictos"), ("🟢", "conflictos"),
+        ("🕵", "conflictos"), ("⬆", "conflictos"), ("✅", "conflictos"), ("📉", "conflictos"),
+        ("🛸", "expansion"), ("🏃", "expansion"), ("📣", "expansion"), ("🆕", "expansion"), ("⚠", "expansion"),
+        ("🏗", "obras"), ("🎉", "obras"), ("🏚", "estaciones"), ("🏳", "estaciones"), ("🏴", "estaciones"), ("🏕", "estaciones"),
+        ("😟", "poblacion"), ("👥", "poblacion"), ("🔻", "poblacion"), ("🔺", "poblacion"), ("📈", "actividad"),
+        ("👾", "thargoides"), ("📊", "resumen"), ("🔄", "escucha"), ("🛡", "escucha")]
+
+def noticia(txt, t):
+    """[t, texto, seccion, urgente, sistema]"""
+    linea = txt.split("\n")[0]
+    sec = next((k for e, k in SECC if linea.startswith(e)), "otras")
+    urg = linea.startswith(("🚨", "🛸")) or "bajo ataque" in linea or "ya no está" in linea or "SISTEMA EN DERROTA" in linea
+    if sec == "poblacion" and linea.startswith("🔻") and "ventaja" in linea:
+        sec = "conflictos"                               # ventaja baja
+    nombres = _re.findall(r"\*\*(.+?)\*\*", linea)
+    sis = next((n for n in nombres if n in DB["sistemas"]), "")
+    return [t, linea[:300], sec, 1 if urg else 0, sis]
+
+def pasa_noticias():
+    """Se llama sin el cerrojo cogido: mueve las noticias nuevas a DB["noticias"]."""
+    with DQL:
+        nuevas, NQ[:] = NQ[:], []
+    if not nuevas:
+        return
+    L = [noticia(txt, t) for txt, t in nuevas]
+    with lock:
+        N = DB.setdefault("noticias", [])
+        N.extend(L)
+        del N[:-300]
+        dirty[0] = True
 
 def _dq_send(url, txt):
     """0 = enviado, segundos = reintentar tras esos segundos, -1 = no reintentar"""
@@ -428,7 +465,8 @@ def gh_loop():
                 h = hashlib.md5((json.dumps(DB["sistemas"], sort_keys=True) + str(DB.get("tick_global")) + json.dumps(DB.get("thargoides"), sort_keys=True)
                                  + json.dumps(DB.get("expansion"), sort_keys=True) + json.dumps(DB.get("codice"), sort_keys=True)
                                  + json.dumps(DB.get("ataques"), sort_keys=True) + json.dumps(DB.get("conflictos_hist"), sort_keys=True)
-                                 + json.dumps(DB.get("rivales"), sort_keys=True) + json.dumps(DB.get("vecinos"), sort_keys=True)).encode()).hexdigest()
+                                 + json.dumps(DB.get("rivales"), sort_keys=True) + json.dumps(DB.get("vecinos"), sort_keys=True)
+                                 + json.dumps(DB.get("noticias"))).encode()).hexdigest()
                 body = json.dumps(DB, ensure_ascii=False, separators=(",", ":"))   # v11.3: compacto (un 35 % menos)
             if h != last_h or time.time() - last_t > 6 * 3600:
                 hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
@@ -1426,6 +1464,10 @@ def saver_loop():
                 ez_ = DB.get("expansion") or {}                  # v8: candidatos sin noticias en 14 dias
                 for k in [k for k, v in ez_.items() if time.time() - (v.get("t") or 0) > 14 * 86400]:
                     ez_.pop(k, None)
+        try:
+            pasa_noticias()                              # v11.6
+        except Exception as e:
+            log("noticias:", e)
         if dirty[0]:
             try:
                 save()
