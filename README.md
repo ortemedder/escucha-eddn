@@ -42,6 +42,19 @@ journalctl -u escucha-eddn -f
 ```
 `github_token.txt` y `discord_webhook.txt` son claves: **no se suben nunca** (están en `.gitignore`).
 
+## Relleno con el archivo de EDDN (una sola vez)
+EDDN no guarda nada, pero [edgalaxydata.space](https://edgalaxydata.space/EDDN) archiva todos sus mensajes por días.
+`relleno_eddn.py` saca de ahí las **visitas** (60 días), el **mapa de horas** (28 días) y el **histórico de influencia**
+de nuestros sistemas y los mezcla en `faccion.json` sin borrar nada (en cada día se queda con el número más alto).
+```bash
+python relleno_eddn.py descargar            # en el PC (tarda: baja varios GB); si se corta, se relanza y sigue
+# copiar relleno.json a /root/elite/escucha-eddn de la Orange Pi, y allí:
+systemctl stop escucha-eddn
+python3 relleno_eddn.py mezclar relleno.json faccion.json     # deja copia en faccion.json.antes_relleno
+systemctl start escucha-eddn
+```
+Opciones: `--dias 30` (menos días), `--atraques` (cuenta también los atraques como visitas; mucha más descarga).
+
 ## Comandos útiles
 ```bash
 journalctl -u escucha-eddn -f                      # ver lo que hace
