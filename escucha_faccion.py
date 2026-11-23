@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.7"                # v11.7: hemeroteca de las noticias fijas (noticia_fija.txt de cdsn-datos)
+VERSION = "v11.7.1"              # v11.7.1: faccion.json siempre sube con su hora y se recuerda el ultimo dato de EDDN al reiniciar
+                                 # v11.7: hemeroteca de las noticias fijas (noticia_fija.txt de cdsn-datos)
                                  # v11.6: noticias (cada aviso de Discord se guarda para La Cronica de Sion de la web)
                                  # v11.5: relleno semanal (viernes 7:00, ultimos 8 dias) y a mano creando el archivo relleno_ya
                                  # v11.4.1: el relleno tambien mete la influencia en los huecos del historico;
@@ -49,6 +50,7 @@ def load():
         if j.get("faccion") == FAC:
             DB["sistemas"] = j.get("sistemas") or {}
             if j.get("tick_global"): DB["tick_global"] = j["tick_global"]
+            if (j.get("eddn") or {}).get("ultimo"): DB["eddn"]["ultimo"] = j["eddn"]["ultimo"]   # v11.7.1
             if j.get("thargoides"): DB["thargoides"] = j["thargoides"]
             for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos", "relleno", "noticias", "fija", "hemeroteca"):   # v8 / v9 / v10 / v11 / v11.4 / v11.6
                 if j.get(k_): DB[k_] = j[k_]
@@ -468,6 +470,7 @@ def gh_loop():
                                  + json.dumps(DB.get("ataques"), sort_keys=True) + json.dumps(DB.get("conflictos_hist"), sort_keys=True)
                                  + json.dumps(DB.get("rivales"), sort_keys=True) + json.dumps(DB.get("vecinos"), sort_keys=True)
                                  + json.dumps(DB.get("noticias")) + json.dumps(DB.get("fija")) + json.dumps(DB.get("hemeroteca"))).encode()).hexdigest()
+                DB["t"] = time.time()                    # v11.7.1: siempre con la hora de la subida
                 body = json.dumps(DB, ensure_ascii=False, separators=(",", ":"))   # v11.3: compacto (un 35 % menos)
             if h != last_h or time.time() - last_t > 6 * 3600:
                 hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
