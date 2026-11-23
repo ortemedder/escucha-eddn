@@ -187,6 +187,22 @@ def cambios(puntos):
     return out
 
 
+def juntar_hinf(h, puntos):
+    """Junta el historico que habia con los datos del archivo, por orden de hora, y se queda con los cambios.
+    El ultimo punto que habia (el valor actual) se respeta siempre."""
+    if not puntos:
+        return h
+    fin = h[-1][0] if h else 10 ** 12
+    todo = sorted([list(p) for p in h] + [[int(t), v] for t, v in puntos if t < fin])
+    limpio = []
+    for p in todo:
+        if not limpio or abs(p[1] - limpio[-1][1]) >= 0.01:
+            limpio.append(p)
+    if h and limpio[-1] != h[-1]:
+        limpio.append(list(h[-1]))
+    return limpio[-PUNTOS_HINF:]
+
+
 def mezclar(a):
     if escucha_en_marcha() and not a.forzar:
         sys.exit("El escucha está en marcha: páralo antes con  systemctl stop escucha-eddn  (si no, lo machacaría al guardar).")
@@ -229,18 +245,12 @@ def mezclar(a):
             if nuevo != o:
                 hd[d] = nuevo; tot["hdia"] += 1
         s["hdia"] = dict(sorted(hd.items())[-DIAS_HDIA:])
-        # historico de influencia: se añaden los cambios de antes del primer punto que ya habia
+        # historico de influencia: se juntan los cambios del archivo con los que ya habia (tambien en los huecos)
         h = [list(x) for x in s.get("hinf") or []]
-        ini = h[0][0] if h else 10 ** 12
-        antes = [p for p in cambios(r.get("inf", [])) if p[0] < ini]
-        if antes:
-            junto = antes + h
-            limpio = [junto[0]]
-            for p in junto[1:]:
-                if abs(p[1] - limpio[-1][1]) >= 0.01:
-                    limpio.append(p)
-            s["hinf"] = limpio[-PUNTOS_HINF:]
-            tot["hinf"] += len(s["hinf"]) - len(h)
+        nuevo = juntar_hinf(h, r.get("inf", []))
+        if nuevo != h:
+            tot["hinf"] += len([p for p in nuevo if p not in h])
+            s["hinf"] = nuevo
     with open(a.faccion + ".tmp", "w", encoding="utf-8") as f:
         json.dump(D, f, ensure_ascii=False, separators=(",", ":"))
     os.replace(a.faccion + ".tmp", a.faccion)

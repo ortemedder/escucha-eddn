@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.4"                # v11.4: relleno automatico cada 15 dias con el archivo de EDDN (edgalaxydata.space)
+VERSION = "v11.4.1"              # v11.4.1: el relleno tambien mete la influencia en los huecos del historico
+                                 # v11.4: relleno automatico cada 15 dias con el archivo de EDDN (edgalaxydata.space)
                                  # v11.3: faccion.json compacto en GitHub, historico de influencia de 60 cambios y mapa de horas de 28 dias,
                                  #        visitas (trafico) de 60 dias
                                  # v11.2: CDSN con 0 % de influencia (EDSM la sigue listando) cuenta como "ya no esta"
@@ -1327,19 +1328,19 @@ def mezcla_relleno(R):
                 hd[d] = nuevo; nh += 1
         s["hdia"] = dict(sorted(hd.items())[-28:])
         h = [list(x) for x in s.get("hinf") or []]
-        ini = h[0][0] if h else 10 ** 12
-        antes = []
-        for t, v in sorted(r.get("inf") or []):
-            if t < ini and (not antes or abs(antes[-1][1] - v) >= 0.01):
-                antes.append([int(t), v])
-        if antes:
-            junto = antes + h
-            limpio = [junto[0]]
-            for p in junto[1:]:
-                if abs(p[1] - limpio[-1][1]) >= 0.01:
+        pts = r.get("inf") or []
+        if pts:                                            # se juntan por orden de hora (tambien en los huecos)
+            fin = h[-1][0] if h else 10 ** 12
+            todo = sorted(h + [[int(t), v] for t, v in pts if t < fin])
+            limpio = []
+            for p in todo:
+                if not limpio or abs(p[1] - limpio[-1][1]) >= 0.01:
                     limpio.append(p)
-            ni += max(0, len(limpio[-60:]) - len(h))
-            s["hinf"] = limpio[-60:]
+            if h and limpio[-1] != h[-1]:
+                limpio.append(list(h[-1]))
+            limpio = limpio[-60:]
+            ni += len([p for p in limpio if p not in h])
+            s["hinf"] = limpio
     dirty[0] = True
     return nt, nh, ni
 
