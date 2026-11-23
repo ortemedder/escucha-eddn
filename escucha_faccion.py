@@ -4,7 +4,9 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.4"                # v11.4: relleno automatico cada 15 dias con el archivo de EDDN (edgalaxydata.space)
+VERSION = "v11.4.1"              # v11.4.1: el relleno tambien mete la influencia en los huecos del historico;
+                                 #          visitas y saltos sin fechas basura (solo +-36 h) y sin dias de mas de 60/28
+                                 # v11.4: relleno automatico cada 15 dias con el archivo de EDDN (edgalaxydata.space)
                                  # v11.3: faccion.json compacto en GitHub, historico de influencia de 60 cambios y mapa de horas de 28 dias,
                                  #        visitas (trafico) de 60 dias
                                  # v11.2: CDSN con 0 % de influencia (EDSM la sigue listando) cuenta como "ya no esta"
@@ -621,7 +623,8 @@ def saltos(sname, mine, t):
         mine["saltos"] = {str(k): v for k, v in s.items()}
         hd = {k: list(v) for k, v in (mine.get("hdia") or {}).items()}   # v11: saltos por dia y hora UTC (28 dias desde v11.3)
         L_ = hd.setdefault(_dia(t), [0] * 24); L_[time.gmtime(t).tm_hour] += 1
-        mine["hdia"] = dict(sorted(hd.items())[-28:]); dirty[0] = True   # v11.3: 28 dias
+        lim_ = _dia(time.time() - 28 * 86400)
+        mine["hdia"] = dict(sorted((k, v) for k, v in hd.items() if k > lim_)); dirty[0] = True   # v11.3: 28 dias
     cur = s.get(h, 0)
     media = sum(s.get(h - 3600 * k, 0) for k in range(1, 25)) / 24
     if cur == max(10, math.ceil(3 * media)) and time.time() - t < 7200 and time.time() - _pico.get(sname, 0) > 6 * 3600:
@@ -925,7 +928,7 @@ def process(pkt):
     with lock:
         mine = DB["sistemas"].get(sname) if sname else None
     # trafico: comandantes distintos por dia (id anonimo de EDDN)
-    if mine and not mine.get("fuera") and hdr.get("uploaderID"):
+    if mine and not mine.get("fuera") and hdr.get("uploaderID") and abs(time.time() - t) < 36 * 3600:   # v11.4.1: sin fechas basura
         day = time.strftime("%Y-%m-%d", time.gmtime(t))
         dd = TRAF.setdefault(sname, {})
         ids = dd.setdefault(day, set())
@@ -937,7 +940,8 @@ def process(pkt):
             with lock:                                   # v11.3: los numeros se guardan 60 dias (los ids solo 9)
                 tr_ = dict(mine.get("trafico") or {})
                 tr_.update({k: len(v) for k, v in dd.items()})
-                mine["trafico"] = dict(sorted(tr_.items())[-60:])
+                lim_ = _dia(time.time() - 60 * 86400)
+                mine["trafico"] = dict(sorted((k, v) for k, v in tr_.items() if k > lim_))
                 dirty[0] = True
     if "/approachsettlement/" in sch:                    # v11: asentamientos de Odyssey
         if mine and not mine.get("fuera"): asentamiento(sname, m, mine, t)
@@ -973,7 +977,7 @@ def process(pkt):
         return
     if vivo and m.get("event") == "Location" and m.get("Docked"):
         estacion(sname, m, mine, t)
-    if vivo and m.get("event") == "FSDJump":
+    if vivo and m.get("event") == "FSDJump" and abs(time.time() - t) < 36 * 3600:
         saltos(sname, mine, t)                            # v8: saltos por hora
     if not vivo and m.get("Factions") and FAC_B not in pkt:
         expansion(sname, m, t)                            # v8: candidatos para expandirse
@@ -1318,28 +1322,30 @@ def mezcla_relleno(R):
                 cnt = len(ids)
             if cnt > tr.get(d, 0):
                 tr[d] = cnt; nt += 1
-        s["trafico"] = dict(sorted(tr.items())[-60:])
+        lim_ = _dia(time.time() - 60 * 86400)
+        s["trafico"] = dict(sorted((k, v) for k, v in tr.items() if k > lim_))
         hd = {k: list(v) for k, v in (s.get("hdia") or {}).items()}
         for d, h in (r.get("hdia") or {}).items():
             o = hd.get(d) or [0] * 24
             nuevo = [max(x, y) for x, y in zip(o, h)]
             if nuevo != o:
                 hd[d] = nuevo; nh += 1
-        s["hdia"] = dict(sorted(hd.items())[-28:])
+        lim_ = _dia(time.time() - 28 * 86400)
+        s["hdia"] = dict(sorted((k, v) for k, v in hd.items() if k > lim_))
         h = [list(x) for x in s.get("hinf") or []]
-        ini = h[0][0] if h else 10 ** 12
-        antes = []
-        for t, v in sorted(r.get("inf") or []):
-            if t < ini and (not antes or abs(antes[-1][1] - v) >= 0.01):
-                antes.append([int(t), v])
-        if antes:
-            junto = antes + h
-            limpio = [junto[0]]
-            for p in junto[1:]:
-                if abs(p[1] - limpio[-1][1]) >= 0.01:
+        pts = r.get("inf") or []
+        if pts:                                            # se juntan por orden de hora (tambien en los huecos)
+            fin = h[-1][0] if h else 10 ** 12
+            todo = sorted(h + [[int(t), v] for t, v in pts if t < fin])
+            limpio = []
+            for p in todo:
+                if not limpio or abs(p[1] - limpio[-1][1]) >= 0.01:
                     limpio.append(p)
-            ni += max(0, len(limpio[-60:]) - len(h))
-            s["hinf"] = limpio[-60:]
+            if h and limpio[-1] != h[-1]:
+                limpio.append(list(h[-1]))
+            limpio = limpio[-60:]
+            ni += len([p for p in limpio if p not in h])
+            s["hinf"] = limpio
     dirty[0] = True
     return nt, nh, ni
 

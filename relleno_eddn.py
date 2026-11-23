@@ -78,6 +78,7 @@ def lineas(url):
 def procesa_dia(d, tipos, sistemas, R, base):
     """Lee los mensajes de un dia y apunta lo de nuestros sistemas en R."""
     vistos, faltan = 0, 0
+    t_dia = epoch(d + "T12:00:00")
     for tipo in tipos:
         url = f"{base}/{d[:7]}/Journal.{tipo}-{d}.jsonl.bz2"
         print(f"   {tipo}: {url}")
@@ -101,7 +102,7 @@ def procesa_dia(d, tipos, sistemas, R, base):
                 if gv.startswith("3.") or "legacy" in gv.lower() or "/test" in (e.get("$schemaRef") or ""):
                     continue                             # galaxia antigua o pruebas (igual que el escucha)
                 t = epoch(msg.get("timestamp")) or epoch(hdr.get("gatewayTimestamp"))
-                if not t:
+                if not t or abs(t - t_dia) > 36 * 3600:   # fecha basura (reloj mal o journal antiguo)
                     continue
                 s = R.setdefault(nombre, {"trafico": {}, "hdia": {}, "inf": []})
                 dd = dia(t)
@@ -187,6 +188,22 @@ def cambios(puntos):
     return out
 
 
+def juntar_hinf(h, puntos):
+    """Junta el historico que habia con los datos del archivo, por orden de hora, y se queda con los cambios.
+    El ultimo punto que habia (el valor actual) se respeta siempre."""
+    if not puntos:
+        return h
+    fin = h[-1][0] if h else 10 ** 12
+    todo = sorted([list(p) for p in h] + [[int(t), v] for t, v in puntos if t < fin])
+    limpio = []
+    for p in todo:
+        if not limpio or abs(p[1] - limpio[-1][1]) >= 0.01:
+            limpio.append(p)
+    if h and limpio[-1] != h[-1]:
+        limpio.append(list(h[-1]))
+    return limpio[-PUNTOS_HINF:]
+
+
 def mezclar(a):
     if escucha_en_marcha() and not a.forzar:
         sys.exit("El escucha está en marcha: páralo antes con  systemctl stop escucha-eddn  (si no, lo machacaría al guardar).")
@@ -212,7 +229,8 @@ def mezclar(a):
         for d, ids in r.get("trafico", {}).items():
             if len(ids) > tr.get(d, 0):
                 tr[d] = len(ids); tot["traf"] += 1
-        s["trafico"] = dict(sorted(tr.items())[-DIAS_TRAF:])
+        lim = (datetime.now(timezone.utc).date() - timedelta(days=DIAS_TRAF)).isoformat()
+        s["trafico"] = dict(sorted((k, v) for k, v in tr.items() if k > lim))   # fuera las fechas basura y lo de mas de 60 dias
         # los ids de los ultimos 9 dias tambien van a trafico.json, para que el escucha siga contando bien hoy
         if TRAF is not None:
             dd = TRAF.setdefault(n, {})
@@ -228,19 +246,14 @@ def mezclar(a):
             nuevo = [max(x, y) for x, y in zip(o, h)]
             if nuevo != o:
                 hd[d] = nuevo; tot["hdia"] += 1
-        s["hdia"] = dict(sorted(hd.items())[-DIAS_HDIA:])
-        # historico de influencia: se añaden los cambios de antes del primer punto que ya habia
+        lim = (datetime.now(timezone.utc).date() - timedelta(days=DIAS_HDIA)).isoformat()
+        s["hdia"] = dict(sorted((k, v) for k, v in hd.items() if k > lim))
+        # historico de influencia: se juntan los cambios del archivo con los que ya habia (tambien en los huecos)
         h = [list(x) for x in s.get("hinf") or []]
-        ini = h[0][0] if h else 10 ** 12
-        antes = [p for p in cambios(r.get("inf", [])) if p[0] < ini]
-        if antes:
-            junto = antes + h
-            limpio = [junto[0]]
-            for p in junto[1:]:
-                if abs(p[1] - limpio[-1][1]) >= 0.01:
-                    limpio.append(p)
-            s["hinf"] = limpio[-PUNTOS_HINF:]
-            tot["hinf"] += len(s["hinf"]) - len(h)
+        nuevo = juntar_hinf(h, r.get("inf", []))
+        if nuevo != h:
+            tot["hinf"] += len([p for p in nuevo if p not in h])
+            s["hinf"] = nuevo
     with open(a.faccion + ".tmp", "w", encoding="utf-8") as f:
         json.dump(D, f, ensure_ascii=False, separators=(",", ":"))
     os.replace(a.faccion + ".tmp", a.faccion)
