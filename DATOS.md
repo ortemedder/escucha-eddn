@@ -25,7 +25,7 @@ Horas: siempre en **segundos UTC** (epoch). Influencias: en **%** (0–100, con 
 | Cabecera de EDDN (`uploaderID`) | Todos | **Visitas**: pilotos distintos por día (id anónimo, no se sabe quién es) |
 | **EDSM** (cada 6 h) | API | Facciones de los sistemas sin datos de EDDN (**sin conflictos**) y coordenadas |
 | **tick.edcd.io** (cada 30 min) | API | Hora del último tick de la galaxia |
-| **edgalaxydata.space** (cada 15 días, v11.4) | Archivo diario de EDDN | Relleno de visitas, mapa de horas e influencia de los días en que el escucha estuvo caído (`relleno_eddn.py`) |
+| **edgalaxydata.space** (viernes a las 7:00 y a mano, v11.5) | Archivo diario de EDDN | Relleno de visitas, mapa de horas e influencia de los días en que el escucha estuvo caído (`relleno_eddn.py`) |
 
 Lo que **no** da EDDN: quién es cada piloto, el arquitecto de un sistema ni el avance de las obras (Spansh tampoco tiene el arquitecto; se ve en Inara), qué misiones hace, en qué día va un conflicto (lo cuenta el escucha) ni el resultado de cada día (lo deduce el escucha).
 
@@ -49,7 +49,7 @@ Lo que **no** da EDDN: quién es cada piloto, el arquitecto de un sistema ni el 
 | `ataques.hist` | Últimos 30 posibles ataques terminados: lo de arriba + `fin`, `dif`, `res` (recuperada/perdida) | v9 |
 | **`conflictos_hist`** | **Últimos 50 conflictos terminados** (ver punto 4) | **v10** |
 | `rivales` | Facciones vigiladas (ver punto 5) | v10 |
-| `relleno` | Último relleno automático con el archivo de EDDN: `t`, `dias`, `visitas`, `horas`, `influencia` (mejorados), `min`, `error` | v11.4 |
+| `relleno` | Último relleno con el archivo de EDDN: `t`, `motivo` (semanal / a mano), `dias`, `visitas`, `horas`, `influencia` (mejorados), `min`, `error` | v11.4 |
 | **`vecinos`** | **Expansiones y retiradas de otras facciones** en nuestros sistemas y a menos de 30 al (ver punto 7) | **v11** |
 
 ---

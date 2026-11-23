@@ -81,6 +81,7 @@ systemctl restart escucha-eddn
 - v11.2: si CDSN sale con 0 % de influencia (EDSM la sigue listando), cuenta como que ya no está en el sistema.
 - v11.3: `faccion.json` se sube compacto (sin espacios, un 35 % menos); histórico de influencia de 60 cambios, mapa de horas de 28 días y visitas de 60 días.
 - v11.4: relleno automático cada 15 días (a las 4:00) con el archivo de EDDN: tapa los huecos de los cortes sin parar el escucha y avisa por Discord. Necesita `relleno_eddn.py` en la misma carpeta. Se cambia con `relleno_dias` y `relleno_hora` en config.json (`relleno_dias: 0` lo apaga).
+- v11.5: el relleno pasa a ser **semanal, los viernes a las 7:00**, con los últimos 8 días (`relleno_dia` 0 lunes … 6 domingo, -1 nunca; `relleno_hora`; `relleno_atras`). **A mano:** `touch /root/elite/escucha-eddn/relleno_ya` (o `echo 30 > relleno_ya` para 30 días) y en menos de un minuto empieza; al acabar avisa por Discord.
 
 Todos los campos de `faccion.json` están explicados en [DATOS.md](DATOS.md).
 
