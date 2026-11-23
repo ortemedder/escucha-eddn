@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.3"                # v11.3: faccion.json compacto en GitHub, historico de influencia de 60 cambios y mapa de horas de 28 dias,
+VERSION = "v11.4"                # v11.4: relleno automatico cada 15 dias con el archivo de EDDN (edgalaxydata.space)
+                                 # v11.3: faccion.json compacto en GitHub, historico de influencia de 60 cambios y mapa de horas de 28 dias,
                                  #        visitas (trafico) de 60 dias
                                  # v11.2: CDSN con 0 % de influencia (EDSM la sigue listando) cuenta como "ya no esta"
                                  # v11.1: obras (construction sites) en nuestros sistemas: aviso al aparecer y al terminarse
@@ -19,7 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = {"faccion": "Caballeros de Sion", "puerto": 8090, "edsm_horas": 6, "github": "ortemedder/cdsn-datos",
-       "github_min": 15, "resumen_hora": 21, "expansion_ly": 20, "vecinos_ly": 30}
+       "github_min": 15, "resumen_hora": 21, "expansion_ly": 20, "vecinos_ly": 30,
+       "relleno_dias": 15, "relleno_hora": 4}   # v11.4: cada cuantos dias y a que hora (local) se rellena; 0 = nunca
 try:
     with open(os.path.join(HERE, "config.json"), encoding="utf-8") as f:
         CFG.update(json.load(f))
@@ -43,7 +45,7 @@ def load():
             DB["sistemas"] = j.get("sistemas") or {}
             if j.get("tick_global"): DB["tick_global"] = j["tick_global"]
             if j.get("thargoides"): DB["thargoides"] = j["thargoides"]
-            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos"):   # v8 / v9 / v10 / v11
+            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos", "relleno"):   # v8 / v9 / v10 / v11 / v11.4
                 if j.get(k_): DB[k_] = j[k_]
     except (OSError, ValueError):
         pass
@@ -1296,6 +1298,89 @@ def quien_sube(sysname, old, new, o_inf, t, src):
                     f"({inf_r:.1f} %, nosotros {new['inf']:.1f} %)".replace(".", ","))
     return msgs
 
+# ---------- v11.4: relleno automatico con el archivo de EDDN ----------
+# Cada relleno_dias (15) dias, a la relleno_hora (4:00), lanza relleno_eddn.py (en la misma carpeta) con prioridad baja
+# para los ultimos relleno_dias + 1 dias, y mezcla el resultado en memoria sin parar el escucha:
+# visitas y mapa de horas, el numero mas alto de cada dia; historico de influencia, los cambios anteriores al primero.
+def mezcla_relleno(R):
+    """Se llama con el cerrojo cogido. Devuelve (dias de visitas mejorados, dias del mapa de horas, puntos de influencia)."""
+    nt = nh = ni = 0
+    for n, s in DB["sistemas"].items():
+        r = (R.get("sistemas") or {}).get(n)
+        if not r or s.get("fuera"):
+            continue
+        tr = dict(s.get("trafico") or {})
+        for d, ids in (r.get("trafico") or {}).items():
+            if d in TRAF.get(n, {}):                       # dias con ids guardados: se juntan, y cuentan los de los dos
+                TRAF[n][d] |= set(ids)
+                cnt = len(TRAF[n][d])
+            else:
+                cnt = len(ids)
+            if cnt > tr.get(d, 0):
+                tr[d] = cnt; nt += 1
+        s["trafico"] = dict(sorted(tr.items())[-60:])
+        hd = {k: list(v) for k, v in (s.get("hdia") or {}).items()}
+        for d, h in (r.get("hdia") or {}).items():
+            o = hd.get(d) or [0] * 24
+            nuevo = [max(x, y) for x, y in zip(o, h)]
+            if nuevo != o:
+                hd[d] = nuevo; nh += 1
+        s["hdia"] = dict(sorted(hd.items())[-28:])
+        h = [list(x) for x in s.get("hinf") or []]
+        ini = h[0][0] if h else 10 ** 12
+        antes = []
+        for t, v in sorted(r.get("inf") or []):
+            if t < ini and (not antes or abs(antes[-1][1] - v) >= 0.01):
+                antes.append([int(t), v])
+        if antes:
+            junto = antes + h
+            limpio = [junto[0]]
+            for p in junto[1:]:
+                if abs(p[1] - limpio[-1][1]) >= 0.01:
+                    limpio.append(p)
+            ni += max(0, len(limpio[-60:]) - len(h))
+            s["hinf"] = limpio[-60:]
+    dirty[0] = True
+    return nt, nh, ni
+
+def relleno_loop():
+    import subprocess
+    script = os.path.join(HERE, "relleno_eddn.py")
+    with lock:
+        if not DB.get("relleno"):                          # la primera vez cuenta desde hoy (el primero se hace a mano)
+            DB["relleno"] = {"t": int(time.time()), "dias": 0}
+    while True:
+        time.sleep(300)
+        cada = CFG.get("relleno_dias") or 0
+        if not cada or time.localtime().tm_hour != CFG.get("relleno_hora", 4):
+            continue
+        if time.time() - (DB.get("relleno") or {}).get("t", 0) < (cada - 0.5) * 86400:
+            continue
+        if not os.path.exists(script):
+            log("Relleno: falta relleno_eddn.py en", HERE); DB["relleno"]["t"] = int(time.time()); continue
+        salida = os.path.join(HERE, "relleno_auto.json")
+        log(f"Relleno: descargando los últimos {cada + 1} días del archivo de EDDN")
+        t0 = time.time()
+        try:
+            cmd = ["nice", "-n", "19", "python3", script, "descargar", "--dias", str(cada + 1), "--rehacer",
+                   "--salida", salida, "--lista", DATA_FILE]
+            r = subprocess.run(cmd, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=6 * 3600)
+            with open(salida, encoding="utf-8") as f:
+                R = json.load(f)
+        except Exception as e:
+            log("Relleno:", e)
+            with lock:
+                DB["relleno"].update({"t": int(time.time()) - (cada - 1) * 86400, "error": str(e)[:200]})   # reintento mañana
+            continue
+        with lock:
+            nt, nh, ni = mezcla_relleno(R)
+            DB["relleno"] = {"t": int(time.time()), "dias": len(R.get("hechos") or []), "visitas": nt, "horas": nh,
+                             "influencia": ni, "min": round((time.time() - t0) / 60)}
+        traf_save()
+        txt = (f"🔄 Relleno con el archivo de EDDN: {len(R.get('hechos') or [])} días en {round((time.time() - t0) / 60)} min · "
+               f"{nt} días de visitas mejorados · {nh} días del mapa de horas · {ni} puntos de influencia")
+        log(txt); discord(txt)
+
 def saver_loop():
     n_ = 0
     while True:
@@ -1332,6 +1417,6 @@ def saver_loop():
 if __name__ == "__main__":
     load()
     log(f"Escucha EDDN {VERSION} · escuchando a '{FAC}' · {len(DB['sistemas'])} sistemas conocidos · puerto {CFG['puerto']}")
-    for fn in (eddn_loop, edsm_loop, saver_loop, gh_loop, discord_loop, resumen_loop, tick_global_loop):
+    for fn in (eddn_loop, edsm_loop, saver_loop, gh_loop, discord_loop, resumen_loop, tick_global_loop, relleno_loop):
         threading.Thread(target=fn, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", CFG["puerto"]), H).serve_forever()
