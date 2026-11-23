@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.7.1"              # v11.7.1: faccion.json siempre sube con su hora y se recuerda el ultimo dato de EDDN al reiniciar
+VERSION = "v11.7.2"              # v11.7.2: los avisos de Discord no pueden mencionar a nadie (@everyone, @here, roles...)
+                                 # v11.7.1: faccion.json siempre sube con su hora y se recuerda el ultimo dato de EDDN al reiniciar
                                  # v11.7: hemeroteca de las noticias fijas (noticia_fija.txt de cdsn-datos)
                                  # v11.6: noticias (cada aviso de Discord se guarda para La Cronica de Sion de la web)
                                  # v11.5: relleno semanal (viernes 7:00, ultimos 8 dias) y a mano creando el archivo relleno_ya
@@ -341,7 +342,7 @@ def pasa_noticias():
 
 def _dq_send(url, txt):
     """0 = enviado, segundos = reintentar tras esos segundos, -1 = no reintentar"""
-    req = urllib.request.Request(url, data=json.dumps({"content": txt[:1900]}).encode(),
+    req = urllib.request.Request(url, data=json.dumps({"content": txt[:1900], "allowed_mentions": {"parse": []}}).encode(),   # v11.7.2: sin menciones
                                  headers={"Content-Type": "application/json", "User-Agent": "PanelEliteRPi-escucha/1.1"})
     try:
         urllib.request.urlopen(req, timeout=15).read()
