@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.6"                # v11.6: noticias (cada aviso de Discord se guarda para La Cronica de Sion de la web)
+VERSION = "v11.7"                # v11.7: hemeroteca de las noticias fijas (noticia_fija.txt de cdsn-datos)
+                                 # v11.6: noticias (cada aviso de Discord se guarda para La Cronica de Sion de la web)
                                  # v11.5: relleno semanal (viernes 7:00, ultimos 8 dias) y a mano creando el archivo relleno_ya
                                  # v11.4.1: el relleno tambien mete la influencia en los huecos del historico;
                                  #          visitas y saltos sin fechas basura (solo +-36 h) y sin dias de mas de 60/28
@@ -49,7 +50,7 @@ def load():
             DB["sistemas"] = j.get("sistemas") or {}
             if j.get("tick_global"): DB["tick_global"] = j["tick_global"]
             if j.get("thargoides"): DB["thargoides"] = j["thargoides"]
-            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos", "relleno", "noticias"):   # v8 / v9 / v10 / v11 / v11.4 / v11.6
+            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos", "relleno", "noticias", "fija", "hemeroteca"):   # v8 / v9 / v10 / v11 / v11.4 / v11.6
                 if j.get(k_): DB[k_] = j[k_]
     except (OSError, ValueError):
         pass
@@ -305,7 +306,7 @@ def discord(txt):
 
 # ---------- v11.6: noticias para La Cronica de Sion ----------
 # Cada aviso se guarda (los 300 ultimos) con su hora, seccion, si es urgente y el sistema al que se refiere.
-SECC = [("🚨", "conflictos"), ("⚔", "conflictos"), ("✉", "conflictos"), ("🏁", "conflictos"), ("🟢", "conflictos"),
+SECC = [("📌", "cronica"), ("🚨", "conflictos"), ("⚔", "conflictos"), ("✉", "conflictos"), ("🏁", "conflictos"), ("🟢", "conflictos"),
         ("🕵", "conflictos"), ("⬆", "conflictos"), ("✅", "conflictos"), ("📉", "conflictos"),
         ("🛸", "expansion"), ("🏃", "expansion"), ("📣", "expansion"), ("🆕", "expansion"), ("⚠", "expansion"),
         ("🏗", "obras"), ("🎉", "obras"), ("🏚", "estaciones"), ("🏳", "estaciones"), ("🏴", "estaciones"), ("🏕", "estaciones"),
@@ -466,7 +467,7 @@ def gh_loop():
                                  + json.dumps(DB.get("expansion"), sort_keys=True) + json.dumps(DB.get("codice"), sort_keys=True)
                                  + json.dumps(DB.get("ataques"), sort_keys=True) + json.dumps(DB.get("conflictos_hist"), sort_keys=True)
                                  + json.dumps(DB.get("rivales"), sort_keys=True) + json.dumps(DB.get("vecinos"), sort_keys=True)
-                                 + json.dumps(DB.get("noticias"))).encode()).hexdigest()
+                                 + json.dumps(DB.get("noticias")) + json.dumps(DB.get("fija")) + json.dumps(DB.get("hemeroteca"))).encode()).hexdigest()
                 body = json.dumps(DB, ensure_ascii=False, separators=(",", ":"))   # v11.3: compacto (un 35 % menos)
             if h != last_h or time.time() - last_t > 6 * 3600:
                 hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
@@ -1437,6 +1438,49 @@ def relleno_loop():
             hecho = lt.tm_yday
             relleno(CFG.get("relleno_atras", 8), "semanal")
 
+# ---------- v11.7: hemeroteca de las noticias fijas ----------
+# El almirante escribe la noticia fija a mano en noticia_fija.txt (repo cdsn-datos). Cada 15 min se mira:
+# si cambia o se quita, la anterior pasa a DB["hemeroteca"] con sus fechas (las 100 ultimas, la mas nueva primero).
+def lee_fija(txt):
+    """[[titular, texto], ...]: sin las lineas con #, y --- separa noticias (igual que la web)."""
+    out = []
+    for b in _re.split(r"(?m)^---\s*$", txt or ""):
+        b = "\n".join(l for l in b.split("\n") if not l.strip().startswith("#")).strip()
+        if b:
+            tit, _, resto = b.partition("\n")
+            out.append([tit.strip(), resto.strip()])
+    return out
+
+def fija_loop():
+    url = f"https://raw.githubusercontent.com/{CFG['github']}/main/noticia_fija.txt"
+    time.sleep(90)
+    while True:
+        try:
+            req = urllib.request.Request(url + "?" + str(int(time.time())), headers={"User-Agent": "PanelEliteRPi-escucha/1.0"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                N = lee_fija(r.read().decode("utf-8"))
+            msgs = []
+            with lock:
+                F = DB.get("fija") or {"n": [], "desde": 0}
+                if N != F.get("n"):
+                    H = DB.setdefault("hemeroteca", [])
+                    for tit, txt in F.get("n") or []:                    # las que se quitan o cambian, a la hemeroteca
+                        if [tit, txt] not in N:
+                            H.insert(0, {"tit": tit, "txt": txt, "desde": F.get("desde") or int(time.time()), "hasta": int(time.time())})
+                    del H[100:]
+                    nuevas = [x for x in N if x not in (F.get("n") or [])]
+                    DB["fija"] = {"n": N, "desde": int(time.time()) if nuevas or not F.get("desde") else F["desde"]}
+                    dirty[0] = True
+                    msgs = [f"📌 Nueva noticia fija en La Crónica de Sion: **{t}**" for t, _ in nuevas]
+            for m_ in msgs:
+                log(m_.replace("**", "")); discord(m_)
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                log("Noticia fija:", e)
+        except Exception as e:
+            log("Noticia fija:", e)
+        time.sleep(900)
+
 def saver_loop():
     n_ = 0
     while True:
@@ -1477,6 +1521,6 @@ def saver_loop():
 if __name__ == "__main__":
     load()
     log(f"Escucha EDDN {VERSION} · escuchando a '{FAC}' · {len(DB['sistemas'])} sistemas conocidos · puerto {CFG['puerto']}")
-    for fn in (eddn_loop, edsm_loop, saver_loop, gh_loop, discord_loop, resumen_loop, tick_global_loop, relleno_loop):
+    for fn in (eddn_loop, edsm_loop, saver_loop, gh_loop, discord_loop, resumen_loop, tick_global_loop, relleno_loop, fija_loop):
         threading.Thread(target=fn, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", CFG["puerto"]), H).serve_forever()
