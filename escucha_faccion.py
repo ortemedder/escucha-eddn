@@ -4,7 +4,9 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.7.2"              # v11.7.2: los avisos de Discord no pueden mencionar a nadie (@everyone, @here, roles...)
+VERSION = "v11.8"                # v11.8: La Cronica mas limpia: una noticia por faccion en expansion (solo en la web, seccion vecindario),
+                                 #        aviso al terminar y al llegar a un sistema nuestro, y resumen diario nuevo
+                                 # v11.7.2: v11.7.2: los avisos de Discord no pueden mencionar a nadie (@everyone, @here, roles...)
                                  # v11.7.1: faccion.json siempre sube con su hora y se recuerda el ultimo dato de EDDN al reiniciar
                                  # v11.7: hemeroteca de las noticias fijas (noticia_fija.txt de cdsn-datos)
                                  # v11.6: noticias (cada aviso de Discord se guarda para La Cronica de Sion de la web)
@@ -53,7 +55,7 @@ def load():
             if j.get("tick_global"): DB["tick_global"] = j["tick_global"]
             if (j.get("eddn") or {}).get("ultimo"): DB["eddn"]["ultimo"] = j["eddn"]["ultimo"]   # v11.7.1
             if j.get("thargoides"): DB["thargoides"] = j["thargoides"]
-            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos", "relleno", "noticias", "fija", "hemeroteca"):   # v8 / v9 / v10 / v11 / v11.4 / v11.6
+            for k_ in ("expansion", "codice", "ataques", "conflictos_hist", "rivales", "vecinos", "relleno", "noticias", "fija", "hemeroteca", "vec_av", "resumen_ayer"):   # v8 / v9 / v10 / v11 / v11.4 / v11.6 / v11.8
                 if j.get(k_): DB[k_] = j[k_]
     except (OSError, ValueError):
         pass
@@ -176,6 +178,11 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
         tick_track(sysname, new, src, t)
         msgs = conf_track(sysname, old, new, t, src)    # v10: dia, fase y resultado de cada conflicto
         msgs += quien_sube(sysname, old, new, o_inf, t, src)   # v10: quien sube cuando bajamos y rivales vigilados
+        if src == "EDDN" and o_inf and old.get("t") and 0 < t - old["t"] < 3 * 86400 and time.time() - t < 6 * 3600:   # v11.8: faccion nueva en un sistema nuestro
+            for x in new["todas"]:
+                if x["n"] not in o_inf and x["n"] != FAC:
+                    tras = " tras su expansión" if x["n"] in (DB.get("vec_av") or {}) else ""
+                    msgs.append(f"🛬 **{x['n']}** llega a **{sysname}**{tras} ({x['inf']:.1f} %)".replace(".", ","))
         DB["sistemas"][sysname] = new
         dirty[0] = True
     for m_ in msgs:
@@ -307,11 +314,16 @@ def discord(txt):
         DQ.append([txt, time.time(), 0])                 # texto, cuando se creo, cuando reintentar
         NQ.append([txt, int(time.time())])               # v11.6: tambien va a La Cronica de Sion (web)
 
+def cronica(txt):
+    """v11.8: noticia solo para La Cronica de Sion (no va a Discord)."""
+    with DQL:
+        NQ.append([txt, int(time.time())])
+
 # ---------- v11.6: noticias para La Cronica de Sion ----------
 # Cada aviso se guarda (los 300 ultimos) con su hora, seccion, si es urgente y el sistema al que se refiere.
 SECC = [("📌", "cronica"), ("🚨", "conflictos"), ("⚔", "conflictos"), ("✉", "conflictos"), ("🏁", "conflictos"), ("🟢", "conflictos"),
         ("🕵", "conflictos"), ("⬆", "conflictos"), ("✅", "conflictos"), ("📉", "conflictos"),
-        ("🛸", "expansion"), ("🏃", "expansion"), ("📣", "expansion"), ("🆕", "expansion"), ("⚠", "expansion"),
+        ("🛸", "vecindario"), ("🛬", "expansion"), ("🏃", "expansion"), ("📣", "expansion"), ("🆕", "expansion"), ("⚠", "expansion"),
         ("🏗", "obras"), ("🎉", "obras"), ("🏚", "estaciones"), ("🏳", "estaciones"), ("🏴", "estaciones"), ("🏕", "estaciones"),
         ("😟", "poblacion"), ("👥", "poblacion"), ("🔻", "poblacion"), ("🔺", "poblacion"), ("📈", "actividad"),
         ("👾", "thargoides"), ("📊", "resumen"), ("🔄", "escucha"), ("🛡", "escucha")]
@@ -320,12 +332,16 @@ def noticia(txt, t):
     """[t, texto, seccion, urgente, sistema]"""
     linea = txt.split("\n")[0]
     sec = next((k for e, k in SECC if linea.startswith(e)), "otras")
-    urg = linea.startswith(("🚨", "🛸")) or "bajo ataque" in linea or "ya no está" in linea or "SISTEMA EN DERROTA" in linea
+    urg = linea.startswith(("🚨", "🛬")) or "bajo ataque" in linea or "ya no está" in linea or "SISTEMA EN DERROTA" in linea
     if sec == "poblacion" and linea.startswith("🔻") and "ventaja" in linea:
         sec = "conflictos"                               # ventaja baja
     nombres = _re.findall(r"\*\*(.+?)\*\*", linea)
     sis = next((n for n in nombres if n in DB["sistemas"]), "")
-    return [t, linea[:300], sec, 1 if urg else 0, sis]
+    r = [t, linea[:300], sec, 1 if urg else 0, sis]
+    cuerpo = txt.split("\n", 1)[1].strip() if "\n" in txt else ""
+    if cuerpo:
+        r.append(cuerpo[:2000])                          # v11.8: el resto de lineas (el resumen diario)
+    return r
 
 def pasa_noticias():
     """Se llama sin el cerrojo cogido: mueve las noticias nuevas a DB["noticias"]."""
@@ -431,17 +447,50 @@ def avisos(sysname, old, new):
                 discord(f"{'🚨' if st_ == 'Retreat' else '📣'} **{sysname}**: {ES.get(st_, st_)} {lab}")
 
 def resumen():
+    """v11.8: resumen del dia, corto (antes era la lista de todos los sistemas)."""
+    f1 = lambda x: f"{x:.1f}".replace(".", ",")
     with lock:
-        S = [v for v in DB["sistemas"].values() if v.get("inf") and not v.get("fuera")]
-    S.sort(key=lambda v: (not v.get("ctrl"), -(v.get("inf") or 0)))
-    L = [f"📊 **{FAC}** · {sum(1 for v in S if v.get('ctrl'))} controlados · {len(S)} sistemas"]
+        S = [dict(v) for v in DB["sistemas"].values() if v.get("inf") and not v.get("fuera")]
+        ay = DB.get("resumen_ayer") or {}
+        A = {k: dict(v) for k, v in (DB.get("vec_av") or {}).items()}
+        RET = sorted({(x["n"], n) for n, v in (DB.get("vecinos") or {}).items() for x in v.get("ret") or []})
+    nc, ns = sum(1 for v in S if v.get("ctrl")), len(S)
+    dif = lambda a, b: f" ({'+' if a - b > 0 else ''}{a - b} desde ayer)" if b is not None and a != b else ""
+    L = [f"📊 **Resumen del día** · **{FAC}** · {nc} controlados{dif(nc, ay.get('ctrl'))} · {ns} sistemas{dif(ns, ay.get('n'))}"]
+    tr = sorted([(v["inf"] - v["prev"], v["sys"]) for v in S if v.get("prev") is not None and time.time() - (v.get("t") or 0) < 86400
+                 and abs(v["inf"] - v["prev"]) >= 0.1], reverse=True)
+    if tr and tr[0][0] > 0:
+        L.append("▲ Suben: " + " · ".join(f"{n} +{f1(d)}" for d, n in tr[:3] if d > 0))
+    if tr and tr[-1][0] < 0:
+        L.append("▼ Bajan: " + " · ".join(f"{n} {f1(d)}" for d, n in sorted(tr)[:3] if d < 0))
+    C = []
     for v in S:
-        gap = v["inf"] - (v.get("segunda_inf") or 0)
-        tr = v["inf"] - v["prev"] if v.get("prev") is not None else 0
-        est = ", ".join([ES.get(x, x) for x in v.get("activos") or []] + [ES.get(y, y) + " (pend.)" for y in v.get("pendientes") or []]
-                        + (["👾 " + TG_ES.get(v["thargoid"].get("estado"), v["thargoid"].get("estado"))] if (v.get("thargoid") or {}).get("estado") else []))
-        L.append((f"{'🏰' if v.get('ctrl') else '·'} {v['sys']}: {v['inf']:.1f} % ({'+' if gap >= 0 else ''}{gap:.1f})"
-                  + (f" {'▲' if tr > 0 else '▼'}{abs(tr):.1f}" if abs(tr) >= 0.1 else "")).replace(".", ",") + (f" · {est}" if est else ""))
+        for c in v.get("conflictos") or []:
+            tipo = {"war": "guerra", "civilwar": "guerra civil", "election": "elecciones"}.get((c.get("tipo") or "").lower(), "conflicto")
+            if c.get("estado") == "pending":
+                C.append(f"{v['sys']} ({tipo} pendiente contra {c.get('contra')})")
+            else:
+                C.append(f"{v['sys']} ({tipo} contra {c.get('contra')}" + (f", día {c['dia']}/{DIAS_CONF}" if c.get("dia") else "")
+                         + f", {c.get('ganados') or 0}-{c.get('perdidos') or 0})")
+    L.append("⚔ Conflictos: " + ("; ".join(C) if C else "ninguno"))
+    ven = sorted((v["inf"] - (v.get("segunda_inf") or 0), v["sys"]) for v in S if v.get("ctrl") and v["inf"] - (v.get("segunda_inf") or 0) < 5)
+    if ven:
+        L.append("⚠ Ventaja de menos de 5 puntos: " + ", ".join(f"{n} ({f1(g)})" for g, n in ven[:6]) + (f" y {len(ven) - 6} más" if len(ven) > 6 else ""))
+    rr = sorted((v["inf"], v["sys"]) for v in S if v["inf"] < 5)
+    if rr:
+        L.append("🚨 Riesgo de retirada (menos del 5 %): " + ", ".join(f"{n} ({f1(i)} %)" for i, n in rr[:6]) + (f" y {len(rr) - 6} más" if len(rr) > 6 else ""))
+    ex = sorted((v["inf"], v["sys"]) for v in S if v["inf"] >= 70)
+    if ex:
+        L.append("🛸 Cerca de expandirnos (70 % o más): " + ", ".join(f"{n} ({f1(i)} %)" for i, n in sorted(ex, reverse=True)[:6]) + (f" y {len(ex) - 6} más" if len(ex) > 6 else ""))
+    if A:
+        L.append(f"🔭 Vecindario: {len(A)} {'facción' if len(A) == 1 else 'facciones'} en expansión cerca · " + "; ".join(
+            f"{n} (puede llegar a {', '.join(o for o, _ in sorted(a['obj'].items(), key=lambda x: x[1])[:3])})" for n, a in sorted(A.items())[:8])
+            + (f" y {len(A) - 8} más" if len(A) > 8 else ""))
+    if RET:
+        L.append("🏃 Retiradas cerca: " + ", ".join(f"{f} en {n}" for f, n in RET[:6]) + (f" y {len(RET) - 6} más" if len(RET) > 6 else ""))
+    with lock:
+        DB["resumen_ayer"] = {"ctrl": nc, "n": ns, "t": int(time.time())}
+        dirty[0] = True
     discord("\n".join(L))
 
 def resumen_loop():
@@ -917,10 +966,22 @@ def vecinos(sname, m, t, propio=False):
         o = V.get(sname) or {}
         if o.get("t", 0) > t:
             return
+        A = DB.setdefault("vec_av", {})                   # v11.8: expansiones ya publicadas, una por faccion
+        en_exp = {e_["n"] for e_ in exp}
+        for x in facs:                                    # la expansion es de toda la faccion: si sale sin ella, termino
+            n_ = x.get("Name")
+            if n_ in A and n_ not in en_exp and t > A[n_]["ult"] and time.time() - t < 6 * 3600:
+                a_ = A.pop(n_); dirty[0] = True
+                msgs.append(f"🛸 **{n_}** terminó su expansión" + (f" (vista desde {len(a_['orig'])} sistemas cerca)" if len(a_.get("orig") or []) > 1 else ""))
         if not exp and not ret:
             if V.pop(sname, None):
                 dirty[0] = True
-            return
+            exp = None                                    # v11.8: sin nada que guardar, pero se publica lo que haya terminado
+    if exp is None:
+        for m_ in msgs:
+            log(m_.replace("**", "")); cronica(m_)
+        return
+    with lock:
         for e_ in exp:                                    # a que sistemas nuestros puede llegar
             obj = []
             for n, v in DB["sistemas"].items():
@@ -934,17 +995,26 @@ def vecinos(sname, m, t, propio=False):
         V[sname] = {"pos": pos, "ly": round(ly, 1), "junto": junto, "propio": propio, "nfac": len(facs),
                     "exp": exp, "ret": ret, "t": t}
         dirty[0] = True
-        o_exp = {x["n"] for x in o.get("exp") or []}
-        for e_ in exp:
-            k_ = (e_["n"], sname)
-            if e_["n"] not in o_exp and e_["obj"] and time.time() - t < 6 * 3600 and time.time() - _vec_avisado.get(k_, 0) > 86400:
-                _vec_avisado[k_] = time.time()
-                donde = "" if propio else f" (a {ly:.0f} al de **{junto}**)"
-                msgs.append(f"🛸 **{e_['n']}** prepara una expansión desde **{sname}**{donde} · puede llegar a "
-                            + ", ".join(f"{n} ({d:.0f} al)" for n, d in e_["obj"][:5])
-                            + (f" y {len(e_['obj']) - 5} más" if len(e_["obj"]) > 5 else ""))
+        for e_ in exp:                                    # v11.8: una sola noticia por faccion (antes una por sistema de origen)
+            a_ = A.get(e_["n"])
+            if a_:
+                if t > a_["ult"]:
+                    a_["ult"] = int(t)
+                if sname not in a_["orig"]:
+                    a_["orig"] = (a_["orig"] + [sname])[-30:]
+                for n, d in e_["obj"]:
+                    if n not in a_["obj"]:
+                        a_["obj"][n] = d
+                continue
+            if not e_["obj"] or time.time() - t > 6 * 3600:
+                continue
+            A[e_["n"]] = {"ini": int(t), "ult": int(t), "orig": [sname], "obj": {n: d for n, d in e_["obj"]}}
+            donde = "" if propio else f" (vista en **{sname}**, a {ly:.0f} al de **{junto}**)"
+            msgs.append(f"🛸 **{e_['n']}** está en expansión{donde} · puede llegar a "
+                        + ", ".join(f"{n} ({d:.0f} al)" for n, d in e_["obj"][:5])
+                        + (f" y {len(e_['obj']) - 5} más" if len(e_["obj"]) > 5 else ""))
     for m_ in msgs:
-        log(m_.replace("**", "")); discord(m_)
+        log(m_.replace("**", "")); cronica(m_)           # v11.8: lo de otras facciones solo en La Cronica (no Discord)
 
 def process(pkt):
     hit = next((n for b_, n in mis_sistemas() if b_ in pkt), None)
@@ -1506,6 +1576,9 @@ def saver_loop():
                 rv_ = DB.get("rivales") or {}                    # v10: rivales sin noticias en 60 dias
                 for k in [k for k, v in rv_.items() if time.time() - (v.get("ult") or 0) > 60 * 86400]:
                     rv_.pop(k, None)
+                va_ = DB.get("vec_av") or {}                     # v11.8: expansiones publicadas sin noticias en 10 dias
+                for k in [k for k, v in va_.items() if time.time() - (v.get("ult") or 0) > 10 * 86400]:
+                    va_.pop(k, None)
                 vz_ = DB.get("vecinos") or {}                    # v11: expansiones/retiradas sin noticias en 10 dias
                 for k in [k for k, v in vz_.items() if time.time() - (v.get("t") or 0) > 10 * 86400]:
                     vz_.pop(k, None)
