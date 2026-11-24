@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.8"                # v11.8: La Cronica mas limpia: una noticia por faccion en expansion (solo en la web, seccion vecindario),
+VERSION = "v11.8.1"              # v11.8.1: "termino su expansion" solo cuando acaba en todos los sistemas donde se vio
+                                 # v11.8: La Cronica mas limpia: una noticia por faccion en expansion (solo en la web, seccion vecindario),
                                  #        aviso al terminar y al llegar a un sistema nuestro, y resumen diario nuevo
                                  # v11.7.2: v11.7.2: los avisos de Discord no pueden mencionar a nadie (@everyone, @here, roles...)
                                  # v11.7.1: faccion.json siempre sube con su hora y se recuerda el ultimo dato de EDDN al reiniciar
@@ -968,11 +969,14 @@ def vecinos(sname, m, t, propio=False):
             return
         A = DB.setdefault("vec_av", {})                   # v11.8: expansiones ya publicadas, una por faccion
         en_exp = {e_["n"] for e_ in exp}
-        for x in facs:                                    # la expansion es de toda la faccion: si sale sin ella, termino
+        for x in facs:                                    # v11.8.1: la expansion es de cada sistema: termina cuando acaba en todos donde se vio
             n_ = x.get("Name")
-            if n_ in A and n_ not in en_exp and t > A[n_]["ult"] and time.time() - t < 6 * 3600:
-                a_ = A.pop(n_); dirty[0] = True
-                msgs.append(f"🛸 **{n_}** terminó su expansión" + (f" (vista desde {len(a_['orig'])} sistemas cerca)" if len(a_.get("orig") or []) > 1 else ""))
+            a_ = A.get(n_)
+            if a_ and n_ not in en_exp and sname in a_["orig"] and t > a_["ult"] and time.time() - t < 6 * 3600:
+                a_["orig"].remove(sname); dirty[0] = True
+                if not a_["orig"]:
+                    A.pop(n_)
+                    msgs.append(f"🛸 **{n_}** terminó su expansión")
         if not exp and not ret:
             if V.pop(sname, None):
                 dirty[0] = True
