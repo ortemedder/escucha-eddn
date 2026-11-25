@@ -4,7 +4,7 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v12.3"                # v12.3: relleno semanal los jueves a las 8:00 UTC, durante el mantenimiento de los servidores
+VERSION = "v12.3"                # v12.3: relleno semanal los jueves a las 8:10 UTC, durante el mantenimiento de los servidores
                                  # v12.2: un sistema con CDSN al 0,0 % cuenta como "ya no esta" (antes se quedaba con 0 %)
                                  # v12.1: faccion.json con los sistemas ordenados por importancia (el radar ESP32 coge los 140 primeros)
                                  # v12: sistemas_inara.csv (export de Inara en cdsn-datos): busca en EDSM los sistemas de CDSN que EDDN aun no ha visto
@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = {"faccion": "Caballeros de Sion", "puerto": 8090, "edsm_horas": 6, "github": "ortemedder/cdsn-datos",
        "github_min": 15, "resumen_hora": 21, "expansion_ly": 20, "vecinos_ly": 30,
-       "relleno_dia": 3, "relleno_hora": 8, "relleno_atras": 8, "relleno_utc": True}   # v12.3: relleno los jueves (0 lunes .. 6 domingo; -1 nunca) a las 8:00 UTC (mantenimiento), ultimos 8 dias
+       "relleno_dia": 3, "relleno_hora": 8, "relleno_min": 10, "relleno_atras": 8, "relleno_utc": True}   # v12.3: relleno los jueves (0 lunes .. 6 domingo; -1 nunca) a las 8:10 UTC (mantenimiento), ultimos 8 dias
 try:
     with open(os.path.join(HERE, "config.json"), encoding="utf-8") as f:
         CFG.update(json.load(f))
@@ -1445,7 +1445,7 @@ def quien_sube(sysname, old, new, o_inf, t, src):
     return msgs
 
 # ---------- v11.4: relleno automatico con el archivo de EDDN ----------
-# Cada semana (relleno_dia, jueves) a la relleno_hora (8:00 UTC, v12.3), o cuando se crea el archivo relleno_ya, lanza relleno_eddn.py
+# Cada semana (relleno_dia, jueves) a la relleno_hora:relleno_min (8:10 UTC, v12.3), o cuando se crea el archivo relleno_ya, lanza relleno_eddn.py
 # (en la misma carpeta) con prioridad baja para los ultimos relleno_atras (8) dias, y mezcla el resultado en memoria sin parar:
 # visitas y mapa de horas, el numero mas alto de cada dia; historico de influencia, los cambios anteriores al primero.
 def mezcla_relleno(R):
@@ -1536,7 +1536,7 @@ def relleno_loop():
             relleno(dias, "a mano")
             continue
         lt = time.gmtime() if CFG.get("relleno_utc", True) else time.localtime()   # v12.3: hora UTC (la del mantenimiento)
-        if CFG.get("relleno_dia", 3) == lt.tm_wday and lt.tm_hour == CFG.get("relleno_hora", 8) and hecho != lt.tm_yday:
+        if CFG.get("relleno_dia", 3) == lt.tm_wday and lt.tm_hour == CFG.get("relleno_hora", 8) and lt.tm_min >= CFG.get("relleno_min", 10) and hecho != lt.tm_yday:
             hecho = lt.tm_yday
             relleno(CFG.get("relleno_atras", 8), "semanal")
 
