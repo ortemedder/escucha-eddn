@@ -88,3 +88,4 @@ systemctl restart escucha-eddn
 Todos los campos de `faccion.json` están explicados en [DATOS.md](DATOS.md).
 
 Creado por CMDR ORTEM ED DER (ortemedder@gmail.com) con Claude.
+- v12.3: el relleno semanal pasa a los **jueves a las 8:00 UTC**, durante el mantenimiento de los servidores (`relleno_dia: 3`, `relleno_hora: 8`, `relleno_utc: true`; con `relleno_utc: false` la hora es la de la Orange Pi).

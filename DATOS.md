@@ -25,7 +25,7 @@ Horas: siempre en **segundos UTC** (epoch). Influencias: en **%** (0–100, con 
 | Cabecera de EDDN (`uploaderID`) | Todos | **Visitas**: pilotos distintos por día (id anónimo, no se sabe quién es) |
 | **EDSM** (cada 6 h) | API | Facciones de los sistemas sin datos de EDDN (**sin conflictos**) y coordenadas |
 | **tick.edcd.io** (cada 30 min) | API | Hora del último tick de la galaxia |
-| **edgalaxydata.space** (viernes a las 7:00 y a mano, v11.5) | Archivo diario de EDDN | Relleno de visitas, mapa de horas e influencia de los días en que el escucha estuvo caído (`relleno_eddn.py`) |
+| **edgalaxydata.space** (jueves a las 8:00 UTC y a mano, v12.3) | Archivo diario de EDDN | Relleno de visitas, mapa de horas e influencia de los días en que el escucha estuvo caído (`relleno_eddn.py`) |
 
 Lo que **no** da EDDN: quién es cada piloto, el arquitecto de un sistema ni el avance de las obras (Spansh tampoco tiene el arquitecto; se ve en Inara), qué misiones hace, en qué día va un conflicto (lo cuenta el escucha) ni el resultado de cada día (lo deduce el escucha).
 
