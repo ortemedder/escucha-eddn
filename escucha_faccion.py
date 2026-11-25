@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v12.1"                # v12.1: faccion.json con los sistemas ordenados por importancia (el radar ESP32 coge los 140 primeros)
+VERSION = "v12.2"                # v12.2: un sistema con CDSN al 0,0 % cuenta como "ya no esta" (antes se quedaba con 0 %)
+                                 # v12.1: faccion.json con los sistemas ordenados por importancia (el radar ESP32 coge los 140 primeros)
                                  # v12: sistemas_inara.csv (export de Inara en cdsn-datos): busca en EDSM los sistemas de CDSN que EDDN aun no ha visto
                                  # v11.9: arquitectos.txt (cdsn-datos): añade solo los sistemas nuevos de CDSN como "heredado", con fecha
                                  # v11.8.1: v11.8.1: "termino su expansion" solo cuando acaba en todos los sistemas donde se vio
@@ -63,6 +64,10 @@ def load():
                 if j.get(k_): DB[k_] = j[k_]
     except (OSError, ValueError):
         pass
+    for v_ in DB["sistemas"].values():                   # v12.2: los que se quedaron con 0 % pasan a "ya no esta"
+        if not v_.get("fuera") and v_.get("inf") is not None and v_.get("inf") <= 0:
+            v_["fuera"] = True
+            log("Ya no está (0 %):", v_.get("sys"))
     try:
         with open(SYS_FILE, encoding="utf-8") as f:
             for l in f:
@@ -98,7 +103,7 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
     """facs: lista de dicts con Name, Influence (0..1), FactionState, ActiveStates... (formato journal)."""
     facs = sorted(facs, key=lambda x: -(x.get("Influence") or 0))
     me = next((x for x in facs if x.get("Name") == FAC), None)
-    if me is not None and (me.get("Influence") or 0) <= 0:
+    if me is not None and round((me.get("Influence") or 0) * 100, 2) <= 0:   # v12.2: tambien 0,00x %
         me = None                                        # v11.2: con 0 % ya no esta en el sistema
     with lock:
         old = DB["sistemas"].get(sysname)
