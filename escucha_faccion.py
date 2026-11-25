@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.9"                # v11.9: arquitectos.txt (cdsn-datos): añade solo los sistemas nuevos de CDSN como "heredado", con fecha
+VERSION = "v12"                  # v12: sistemas_inara.csv (export de Inara en cdsn-datos): busca en EDSM los sistemas de CDSN que EDDN aun no ha visto
+                                 # v11.9: arquitectos.txt (cdsn-datos): añade solo los sistemas nuevos de CDSN como "heredado", con fecha
                                  # v11.8.1: v11.8.1: "termino su expansion" solo cuando acaba en todos los sistemas donde se vio
                                  # v11.8: La Cronica mas limpia: una noticia por faccion en expansion (solo en la web, seccion vecindario),
                                  #        aviso al terminar y al llegar a un sistema nuestro, y resumen diario nuevo
@@ -1622,6 +1623,45 @@ def arq_loop():
             continue
         time.sleep(6 * 3600)
 
+# ---------- v12: sistemas de CDSN que EDDN aun no ha visto ----------
+# El almirante exporta de Inara la presencia de la faccion (CSV) y lo sube a cdsn-datos como sistemas_inara.csv.
+# Cada 12 h se lee y, para cada sistema que el escucha aun no conoce, se pide a EDSM (como el resto).
+# Si EDSM no tiene a la faccion en ese sistema, no se añade (EDDN/EDSM mandan; el CSV solo dice donde mirar).
+def inara_loop():
+    import csv, io
+    url = f"https://raw.githubusercontent.com/{CFG['github']}/main/sistemas_inara.csv"
+    time.sleep(150)
+    while True:
+        try:
+            req = urllib.request.Request(url + "?" + str(int(time.time())), headers={"User-Agent": "PanelEliteRPi-escucha/1.0"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                txt = r.read().decode("utf-8-sig")
+            L = [row[0].strip() for row in csv.reader(io.StringIO(txt)) if row and row[0].strip()]
+            if L and L[0].lower().startswith("sistema"):
+                L = L[1:]
+            with lock:
+                ya = {n.lower() for n in DB["sistemas"]}
+            nuevos = [n for n in L if n.lower() not in ya]
+            if nuevos:
+                log(f"Inara: {len(L)} sistemas en el CSV, {len(nuevos)} sin ver por EDDN; se piden a EDSM")
+            ok = 0
+            for n in nuevos:
+                try:
+                    edsm_one(n)
+                    if n in DB["sistemas"]:
+                        ok += 1
+                except Exception as e:
+                    log("EDSM", n, e)
+                time.sleep(3)                            # sin prisa: EDSM pide no saturar
+            if nuevos:
+                log(f"Inara: añadidos {ok} de {len(nuevos)} sistemas nuevos")
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                log("Inara CSV:", e)
+        except Exception as e:
+            log("Inara CSV:", e)
+        time.sleep(12 * 3600)
+
 def saver_loop():
     n_ = 0
     while True:
@@ -1665,6 +1705,6 @@ def saver_loop():
 if __name__ == "__main__":
     load()
     log(f"Escucha EDDN {VERSION} · escuchando a '{FAC}' · {len(DB['sistemas'])} sistemas conocidos · puerto {CFG['puerto']}")
-    for fn in (eddn_loop, edsm_loop, saver_loop, gh_loop, discord_loop, resumen_loop, tick_global_loop, relleno_loop, fija_loop, arq_loop):
+    for fn in (eddn_loop, edsm_loop, saver_loop, gh_loop, discord_loop, resumen_loop, tick_global_loop, relleno_loop, fija_loop, arq_loop, inara_loop):
         threading.Thread(target=fn, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", CFG["puerto"]), H).serve_forever()
