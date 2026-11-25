@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v12"                  # v12: sistemas_inara.csv (export de Inara en cdsn-datos): busca en EDSM los sistemas de CDSN que EDDN aun no ha visto
+VERSION = "v12.1"                # v12.1: faccion.json con los sistemas ordenados por importancia (el radar ESP32 coge los 140 primeros)
+                                 # v12: sistemas_inara.csv (export de Inara en cdsn-datos): busca en EDSM los sistemas de CDSN que EDDN aun no ha visto
                                  # v11.9: arquitectos.txt (cdsn-datos): añade solo los sistemas nuevos de CDSN como "heredado", con fecha
                                  # v11.8.1: v11.8.1: "termino su expansion" solo cuando acaba en todos los sistemas donde se vio
                                  # v11.8: La Cronica mas limpia: una noticia por faccion en expansion (solo en la web, seccion vecindario),
@@ -505,6 +506,21 @@ def resumen_loop():
             hecho = lt.tm_yday
             resumen()
 
+# ---------- v12.1: orden de importancia para el radar ESP32 (solo le caben 140) ----------
+# 1) conflicto, retirada, influencia baja o posible ataque; 2) controlados; 3) el resto. Dentro de cada grupo, mas influencia primero.
+# Solo cambia el orden de las claves en el JSON subido: la web y el panel ordenan por su cuenta.
+_GRAVES = {"War", "CivilWar", "Election", "Retreat"}
+def orden_sistemas(S):
+    at = set(((DB.get("ataques") or {}).get("act") or {}).keys())
+    def prio(it):
+        n, v = it
+        if v.get("fuera") or v.get("inf") is None:
+            return (3, 0)
+        est = set(v.get("activos") or []) | set(v.get("pendientes") or [])
+        grave = bool(v.get("conflictos")) or bool(est & _GRAVES) or n in at or (v.get("inf") or 0) < 5
+        return (0 if grave else 1 if v.get("ctrl") else 2, -(v.get("inf") or 0))
+    return dict(sorted(S.items(), key=prio))
+
 # ---------- subida a GitHub (todos los paneles leen de ahi) ----------
 def gh_loop():
     tf = os.path.join(HERE, "github_token.txt")
@@ -524,7 +540,7 @@ def gh_loop():
                                  + json.dumps(DB.get("rivales"), sort_keys=True) + json.dumps(DB.get("vecinos"), sort_keys=True)
                                  + json.dumps(DB.get("noticias")) + json.dumps(DB.get("fija")) + json.dumps(DB.get("hemeroteca"))).encode()).hexdigest()
                 DB["t"] = time.time()                    # v11.7.1: siempre con la hora de la subida
-                body = json.dumps(DB, ensure_ascii=False, separators=(",", ":"))   # v11.3: compacto (un 35 % menos)
+                body = json.dumps(dict(DB, sistemas=orden_sistemas(DB["sistemas"])), ensure_ascii=False, separators=(",", ":"))   # v11.3: compacto; v12.1: ordenado
             if h != last_h or time.time() - last_t > 6 * 3600:
                 hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
                        "User-Agent": "PanelEliteRPi-escucha/1.0", "X-GitHub-Api-Version": "2022-11-28"}
