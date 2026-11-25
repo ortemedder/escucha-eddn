@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v11.8.1"              # v11.8.1: "termino su expansion" solo cuando acaba en todos los sistemas donde se vio
+VERSION = "v11.9"                # v11.9: arquitectos.txt (cdsn-datos): añade solo los sistemas nuevos de CDSN como "heredado", con fecha
+                                 # v11.8.1: v11.8.1: "termino su expansion" solo cuando acaba en todos los sistemas donde se vio
                                  # v11.8: La Cronica mas limpia: una noticia por faccion en expansion (solo en la web, seccion vecindario),
                                  #        aviso al terminar y al llegar a un sistema nuestro, y resumen diario nuevo
                                  # v11.7.2: v11.7.2: los avisos de Discord no pueden mencionar a nadie (@everyone, @here, roles...)
@@ -1559,6 +1560,68 @@ def fija_loop():
             log("Noticia fija:", e)
         time.sleep(900)
 
+# ---------- v11.9: arquitectos.txt ----------
+# El arquitecto no llega por EDDN: el almirante lo escribe a mano en arquitectos.txt (repo cdsn-datos), "Sistema = CMDR".
+# Cada 6 h se añaden AL FINAL los sistemas de CDSN que aun no estan, como "heredado", bajo una linea "# Nuevos dd/mm/aaaa".
+# Nunca se toca ni se borra una linea que ya este (heredado o con nombre de CMDR).
+def arq_nombres(txt):
+    out = set()
+    for l in (txt or "").split("\n"):
+        if l.strip().startswith("#") or "=" not in l:
+            continue
+        n = l.split("=", 1)[0].strip().lower()
+        if n:
+            out.add(n)
+    return out
+
+def arq_loop():
+    tf = os.path.join(HERE, "github_token.txt")
+    api = f"https://api.github.com/repos/{CFG['github']}/contents/arquitectos.txt"
+    time.sleep(120)
+    while True:
+        try:
+            token = open(tf).read().strip()
+        except OSError:
+            token = ""
+        try:
+            with lock:
+                S = sorted({v.get("sys") or n for n, v in DB["sistemas"].items() if not v.get("fuera")}, key=str.lower)
+            if token and len(S) > 10:                    # con pocos sistemas (arranque sin datos) no se toca nada
+                hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
+                       "User-Agent": "PanelEliteRPi-escucha/1.0", "X-GitHub-Api-Version": "2022-11-28"}
+                sha, txt = None, ""
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(api, headers=hdr), timeout=20) as r:
+                        j = json.loads(r.read().decode())
+                    sha, txt = j.get("sha"), base64.b64decode(j.get("content") or "").decode("utf-8")
+                except urllib.error.HTTPError as e:
+                    if e.code != 404:
+                        raise
+                ya = arq_nombres(txt)
+                nuevos = [n for n in S if n.lower() not in ya]
+                if nuevos:
+                    hoy = time.strftime("%d/%m/%Y")
+                    if not sha:
+                        txt = ("# Arquitectos de los sistemas de CDSN (lo edita el almirante a mano)\n"
+                               "# Una linea por sistema:  Sistema = CMDR   (o  Sistema = heredado  si es anterior a la colonizacion)\n"
+                               "# El escucha añade al final los sistemas nuevos como heredado; nunca cambia ni borra lo que ya esta.\n"
+                               f"\n# Sistemas de CDSN a {hoy}\n")
+                    else:
+                        txt = txt.rstrip("\n") + f"\n\n# Nuevos {hoy}\n"
+                    txt += "".join(f"{n} = heredado\n" for n in nuevos)
+                    put = {"message": f"Arquitectos: {len(nuevos)} sistema(s) nuevo(s) {hoy}",
+                           "content": base64.b64encode(txt.encode("utf-8")).decode()}
+                    if sha:
+                        put["sha"] = sha                 # si el almirante lo acaba de editar, falla (409) y se reintenta luego
+                    req = urllib.request.Request(api, data=json.dumps(put).encode(), headers=hdr, method="PUT")
+                    urllib.request.urlopen(req, timeout=30).read()
+                    log(f"Arquitectos: añadidos {len(nuevos)} sistemas nuevos")
+        except Exception as e:
+            log("Arquitectos:", e)
+            time.sleep(600)
+            continue
+        time.sleep(6 * 3600)
+
 def saver_loop():
     n_ = 0
     while True:
@@ -1602,6 +1665,6 @@ def saver_loop():
 if __name__ == "__main__":
     load()
     log(f"Escucha EDDN {VERSION} · escuchando a '{FAC}' · {len(DB['sistemas'])} sistemas conocidos · puerto {CFG['puerto']}")
-    for fn in (eddn_loop, edsm_loop, saver_loop, gh_loop, discord_loop, resumen_loop, tick_global_loop, relleno_loop, fija_loop):
+    for fn in (eddn_loop, edsm_loop, saver_loop, gh_loop, discord_loop, resumen_loop, tick_global_loop, relleno_loop, fija_loop, arq_loop):
         threading.Thread(target=fn, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", CFG["puerto"]), H).serve_forever()
