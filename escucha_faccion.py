@@ -4,7 +4,9 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v12.4"                # v12.4: el relleno lee tambien los atraques (Docked): mas visitas, como cuenta el escucha en vivo
+VERSION = "v12.5"                # v12.5: historial.json (influencia de los rivales, zonas de conflicto y portanaves, 60 dias)
+                                 #        y relleno diario de madrugada (6:30 hora de la Orange Pi, menos el dia del semanal)
+                                 # v12.4: el relleno lee tambien los atraques (Docked): mas visitas, como cuenta el escucha en vivo
                                  # v12.3: relleno semanal los jueves a las 7:10 UTC (8:10 en invierno en España), durante el mantenimiento de los servidores
                                  # v12.2: un sistema con CDSN al 0,0 % cuenta como "ya no esta" (antes se quedaba con 0 %)
                                  # v12.1: faccion.json con los sistemas ordenados por importancia (el radar ESP32 coge los 140 primeros)
@@ -38,7 +40,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = {"faccion": "Caballeros de Sion", "puerto": 8090, "edsm_horas": 6, "github": "ortemedder/cdsn-datos",
        "github_min": 15, "resumen_hora": 21, "expansion_ly": 20, "vecinos_ly": 30,
        "relleno_dia": 3, "relleno_hora": 7, "relleno_min": 10, "relleno_atras": 8, "relleno_utc": True,
-       "relleno_atraques": True}   # v12.3: relleno los jueves (0 lunes .. 6 domingo; -1 nunca) a las 7:10 UTC (mantenimiento), ultimos 8 dias
+       "relleno_atraques": True, "relleno_senales": True,
+       "diario_hora": 6, "diario_min": 30, "diario_atras": 2}   # v12.5: relleno diario a las 6:30 (hora de la Orange Pi), ultimos 2 dias; diario_hora -1 = nunca   # v12.3: relleno los jueves (0 lunes .. 6 domingo; -1 nunca) a las 7:10 UTC (mantenimiento), ultimos 8 dias
 try:
     with open(os.path.join(HERE, "config.json"), encoding="utf-8") as f:
         CFG.update(json.load(f))
@@ -195,6 +198,7 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
                 if x["n"] not in o_inf and x["n"] != FAC:
                     tras = " tras su expansión" if x["n"] in (DB.get("vec_av") or {}) else ""
                     msgs.append(f"🛬 **{x['n']}** llega a **{sysname}**{tras} ({x['inf']:.1f} %)".replace(".", ","))
+        hist_rivales(sysname, new["todas"], t)          # v12.5
         DB["sistemas"][sysname] = new
         dirty[0] = True
     for m_ in msgs:
@@ -530,6 +534,8 @@ def orden_sistemas(S):
     return dict(sorted(S.items(), key=prio))
 
 # ---------- subida a GitHub (todos los paneles leen de ahi) ----------
+hist_up = [0, None]                                  # v12.5: hora y huella de la ultima subida de historial.json
+
 def gh_loop():
     tf = os.path.join(HERE, "github_token.txt")
     last_h, last_t = None, 0
@@ -570,6 +576,32 @@ def gh_loop():
                     log("GitHub: faccion.json subido")
                 except Exception as e:
                     log("GitHub:", e)
+            if time.time() - hist_up[0] > 3600:          # v12.5: historial.json, como mucho una vez por hora
+                try:
+                    body_h = hist_texto()
+                    hh = hashlib.md5(body_h.split(',"t":')[0].encode()).hexdigest()
+                    if hh != hist_up[1]:
+                        hdr = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
+                               "User-Agent": "PanelEliteRPi-escucha/1.0", "X-GitHub-Api-Version": "2022-11-28"}
+                        api_h = f"https://api.github.com/repos/{CFG['github']}/contents/historial.json"
+                        sha = None
+                        try:
+                            with urllib.request.urlopen(urllib.request.Request(api_h, headers=hdr), timeout=20) as r:
+                                sha = json.loads(r.read().decode()).get("sha")
+                        except urllib.error.HTTPError as e:
+                            if e.code != 404:
+                                raise
+                        put = {"message": "Historial " + time.strftime("%d/%m/%Y %H:%M"),
+                               "content": base64.b64encode(body_h.encode("utf-8")).decode()}
+                        if sha:
+                            put["sha"] = sha
+                        req = urllib.request.Request(api_h, data=json.dumps(put).encode(), headers=hdr, method="PUT")
+                        urllib.request.urlopen(req, timeout=60).read()
+                        hist_up[1] = hh
+                        log(f"GitHub: historial.json subido ({len(body_h) // 1024} KB)")
+                    hist_up[0] = time.time()
+                except Exception as e:
+                    log("GitHub historial:", e)
         time.sleep(CFG["github_min"] * 60)
 
 
@@ -610,6 +642,82 @@ def traf_save():
         os.replace(TRAF_FILE + ".tmp", TRAF_FILE)
     except OSError as e:
         log("trafico:", e)
+
+# ---------- v12.5: historial.json (se sube aparte a GitHub, para no engordar faccion.json ni el radar) ----------
+# rivales:    {sistema: {faccion: [[hora, %], ...]}}   un punto cada vez que cambia, 60 dias (+ el valor de antes)
+# zonas:      {sistema: {"aaaa-mm-dd": ["High", "Med", "Low"]}}   niveles de zona de conflicto vistos ese dia
+# portanaves: {sistema: {"XXX-XXX": {"n": nombre, "d": primera vez, "u": ultima vez}}}
+HIST_FILE = os.path.join(HERE, "historial.json")
+HIST_DIAS = 60
+try:
+    with open(HIST_FILE, encoding="utf-8") as _f:
+        HIST = json.load(_f)
+except (OSError, ValueError):
+    HIST = {}
+for _k in ("rivales", "zonas", "portanaves"):
+    HIST.setdefault(_k, {})
+hist_dirty = [False]
+
+def hist_rivales(sysname, todas, t):
+    """Se llama con el cerrojo cogido, con las facciones de un dato nuevo del sistema."""
+    hr = HIST["rivales"].setdefault(sysname, {})
+    for x in todas or []:
+        if x.get("n") == FAC or not x.get("inf"):
+            continue
+        h = hr.setdefault(x["n"], [])
+        if not h or (abs(h[-1][1] - x["inf"]) >= 0.01 and t > h[-1][0]):
+            h.append([int(t), x["inf"]]); hist_dirty[0] = True
+
+def hist_zona(sysname, lv, ts):
+    z = HIST["zonas"].setdefault(sysname, {}).setdefault(_dia(ts), [])
+    if lv not in z:
+        z.append(lv); z.sort(key=["High", "Med", "Low"].index); hist_dirty[0] = True
+
+def hist_pn(sysname, cs, nombre, ts):
+    hp = HIST["portanaves"].setdefault(sysname, {})
+    o = hp.get(cs)
+    if not o:
+        hp[cs] = {"n": nombre, "d": int(ts), "u": int(ts)}
+    elif ts > o["u"] or ts < o["d"]:
+        o["d"], o["u"] = min(o["d"], int(ts)), max(o["u"], int(ts))
+    else:
+        return
+    hist_dirty[0] = True
+
+def hist_limpia():
+    """Se llama con el cerrojo cogido: fuera lo de mas de 60 dias (de los rivales se deja el valor de antes)."""
+    desde = time.time() - HIST_DIAS * 86400
+    lim = _dia(desde)
+    for n, hr in HIST["rivales"].items():
+        for f_, h in list(hr.items()):
+            viejo = [p for p in h if p[0] < desde]
+            if len(viejo) > 1:
+                hr[f_] = viejo[-1:] + [p for p in h if p[0] >= desde]
+            if hr[f_][-1][0] < desde:                    # faccion sin datos en 60 dias (se fue del sistema)
+                hr.pop(f_)
+    for n, hz in HIST["zonas"].items():
+        for d in [d for d in hz if d <= lim]:
+            hz.pop(d)
+    for n, hp in HIST["portanaves"].items():
+        for cs in [cs for cs, v in hp.items() if v["u"] < desde]:
+            hp.pop(cs)
+    for k in ("rivales", "zonas", "portanaves"):
+        HIST[k] = {n: v for n, v in HIST[k].items() if v}
+
+def hist_texto():
+    with lock:
+        hist_limpia()
+        return json.dumps(dict(HIST, t=int(time.time())), ensure_ascii=False, separators=(",", ":"))
+
+def hist_save():
+    try:
+        txt = hist_texto()
+        with open(HIST_FILE + ".tmp", "w", encoding="utf-8") as f:
+            f.write(txt)
+        os.replace(HIST_FILE + ".tmp", HIST_FILE)
+        hist_dirty[0] = False
+    except OSError as e:
+        log("historial:", e)
 
 # ---------- guerra thargoide (v7) ----------
 # Los FSDJump/Location/CarrierJump traen "ThargoidWar" si el sistema esta en guerra con los thargoides.
@@ -1101,6 +1209,7 @@ def process(pkt):
                     zc = {z["n"]: z for z in mine.get("zc") or [] if time.time() - z["t"] < 86400}
                     zc[nm] = {"n": nm, "i": lv, "t": ts}
                     mine["zc"] = sorted(zc.values(), key=lambda z: -z["t"])[:8]
+                    hist_zona(sname, lv, ts)             # v12.5
                     dirty[0] = True
                 elif sg.get("SignalType") == "FleetCarrier" or (sg.get("IsStation") and CALLSIGN.search(nm)):
                     cs = CALLSIGN.search(nm)
@@ -1109,6 +1218,7 @@ def process(pkt):
                         pn[cs.group(1)] = {"n": nm.replace(cs.group(1), "").strip(), "t": ts,
                                            "d": (pn.get(cs.group(1)) or {}).get("d") or ts}   # v8: desde cuando esta
                         mine["pn"] = pn
+                        hist_pn(sname, cs.group(1), pn[cs.group(1)]["n"], ts)   # v12.5
                         dirty[0] = True
         return
     vivo = mine and not mine.get("fuera")
@@ -1508,6 +1618,8 @@ def relleno(dias, motivo):
                "--salida", salida, "--lista", DATA_FILE]
         if CFG.get("relleno_atraques", True):               # v12.4: tambien los Docked (mas descarga, ~el doble de tiempo)
             cmd.append("--atraques")
+        if CFG.get("relleno_senales", True):                # v12.5: zonas de conflicto y portanaves
+            cmd.append("--senales")
         subprocess.run(cmd, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=6 * 3600)
         with open(salida, encoding="utf-8") as f:
             R = json.load(f)
@@ -1517,17 +1629,32 @@ def relleno(dias, motivo):
             DB["relleno"] = dict(DB.get("relleno") or {}, error=str(e)[:200], t_error=int(time.time()))
         discord(f"⚠️ Relleno con el archivo de EDDN: ha fallado ({str(e)[:150]})")
         return
+    nr = nz = npn = 0
     with lock:
         nt, nh, ni = mezcla_relleno(R)
+        try:                                             # v12.5: rivales, zonas y portanaves -> historial.json
+            import importlib.util
+            sp_ = importlib.util.spec_from_file_location("relleno_eddn", script)
+            re_ = importlib.util.module_from_spec(sp_); sp_.loader.exec_module(re_)
+            vivos = {n for n, v in DB["sistemas"].items() if not v.get("fuera")}
+            nr, nz, npn = re_.mezcla_historial(HIST, R, vivos)
+            hist_dirty[0] = True
+        except Exception as e:
+            log("Relleno, historial:", e)
         DB["relleno"] = {"t": int(time.time()), "motivo": motivo, "dias": len(R.get("hechos") or []), "visitas": nt,
-                         "horas": nh, "influencia": ni, "min": round((time.time() - t0) / 60)}
-    traf_save()
+                         "horas": nh, "influencia": ni, "min": round((time.time() - t0) / 60),
+                         "rivales": nr, "zonas": nz, "portanaves": npn}
+    traf_save(); hist_save()
     txt = (f"🔄 Relleno con el archivo de EDDN ({motivo}): {len(R.get('hechos') or [])} días en {round((time.time() - t0) / 60)} min · "
-           f"{nt} días de visitas mejorados · {nh} días del mapa de horas · {ni} puntos de influencia")
-    log(txt); discord(txt)
+           f"{nt} días de visitas mejorados · {nh} días del mapa de horas · {ni} puntos de influencia · "
+           f"{nr} puntos de rivales · {nz} días con zonas de conflicto · {npn} portanaves")
+    log(txt)
+    if motivo != "diario" or ni:                         # v12.5: el diario solo avisa si tapa un hueco del escucha
+        discord(txt)
 
 def relleno_loop():
     hecho = None                                         # dia en que ya se hizo el relleno programado
+    hecho_d = None                                       # v12.5: dia en que ya se hizo el diario
     while True:
         time.sleep(30)
         if os.path.exists(RELLENO_YA):                   # a mano:  touch relleno_ya   (o con un numero de dias dentro)
@@ -1543,6 +1670,12 @@ def relleno_loop():
         if CFG.get("relleno_dia", 3) == lt.tm_wday and lt.tm_hour == CFG.get("relleno_hora", 7) and lt.tm_min >= CFG.get("relleno_min", 10) and hecho != lt.tm_yday:
             hecho = lt.tm_yday
             relleno(CFG.get("relleno_atras", 8), "semanal")
+            continue
+        ll = time.localtime()                            # v12.5: diario de madrugada, hora de la Orange Pi (Espana)
+        if (CFG.get("diario_hora", 6) >= 0 and ll.tm_hour == CFG.get("diario_hora", 6) and ll.tm_min >= CFG.get("diario_min", 30)
+                and hecho_d != ll.tm_yday and ll.tm_wday != CFG.get("relleno_dia", 3)):
+            hecho_d = ll.tm_yday
+            relleno(CFG.get("diario_atras", 2), "diario")
 
 # ---------- v11.7: hemeroteca de las noticias fijas ----------
 # El almirante escribe la noticia fija a mano en noticia_fija.txt (repo cdsn-datos). Cada 15 min se mira:
@@ -1695,6 +1828,8 @@ def saver_loop():
         n_ += 1
         if n_ % 30 == 0:                                 # cada 5 min
             traf_save()
+            if hist_dirty[0]:
+                hist_save()                              # v12.5
             try:
                 revisa_ataques()
             except Exception as e:                       # nunca debe tumbar el guardado

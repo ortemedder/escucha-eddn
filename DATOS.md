@@ -171,3 +171,14 @@ estación ganada o perdida · **estación dañada / bajo ataque y su vuelta a la
 
 ## 8. Ideas para más adelante (datos que EDDN manda y no guardamos)
 - Cuerpos escaneados (`Scan`, `FSSAllBodiesFound`) en nuestros sistemas.
+
+## historial.json (v12.5)
+
+Archivo aparte en cdsn-datos (no va en faccion.json, para no engordarlo ni cargar al radar). Guarda 60 días.
+
+| Campo | Qué es |
+|---|---|
+| `rivales` | `{sistema: {facción: [[hora, %], ...]}}`: influencia de cada facción que no es CDSN, un punto cada vez que cambia (más el valor de antes de los 60 días, para que la gráfica empiece bien) |
+| `zonas` | `{sistema: {"aaaa-mm-dd": ["High", "Med", "Low"]}}`: niveles de zona de conflicto vistos cada día |
+| `portanaves` | `{sistema: {"XXX-XXX": {"n": nombre, "d": primera vez, "u": última vez}}}`: portanaves que han pasado por el sistema |
+| `t` | hora en que se generó |
