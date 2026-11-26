@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v12.5"                # v12.5: historial.json (influencia de los rivales, zonas de conflicto y portanaves, 60 dias)
+VERSION = "v12.6"                # v12.6: mineria (anillos, hotspots y precio de los minerales en tus estaciones)
+# v12.5: historial.json (influencia de los rivales, zonas de conflicto y portanaves, 60 dias)
                                  #        y relleno diario de madrugada (6:30 hora de la Orange Pi, menos el dia del semanal)
                                  # v12.4: el relleno lee tambien los atraques (Docked): mas visitas, como cuenta el escucha en vivo
                                  # v12.3: relleno semanal los jueves a las 7:10 UTC (8:10 en invierno en España), durante el mantenimiento de los servidores
@@ -162,7 +163,7 @@ def update(sysname, t, facs, ctrl_name, src, conflicts=(), extra=None):
             if v_:
                 new[k_] = v_
         for k_ in ("trafico", "zc", "pn", "tk", "thargoid", "saltos", "rutas", "estaciones", "cseg", "sube_cuando_baja",
-                   "hsis", "hdia", "asent"):  # actividad (v11: hsis, hdia, asent): siempre se conserva
+                   "hsis", "hdia", "asent", "anillos", "hot"):  # actividad (v11: hsis, hdia, asent; v12.6: anillos, hot): siempre se conserva
             if (old or {}).get(k_):
                 new[k_] = old[k_]
         cambio_sis(sysname, old, new, t, src)            # v11: poblacion y seguridad
@@ -959,6 +960,53 @@ def atraque(m, sch, t):
         a[_dia(t)] = d
         e["atq"] = dict(sorted(a.items())[-8:]); dirty[0] = True
 
+# v12.6: mineria. Minerales que se miran en el mercado (nombre de EDDN -> nombre en el juego)
+MINERALES = {"platinum": "Platinum", "painite": "Painite", "osmium": "Osmium", "lowtemperaturediamond": "LTD",
+             "rhodplumsite": "Rhodplumsite", "serendibite": "Serendibite", "monazite": "Monazite",
+             "musgravite": "Musgravite", "grandidierite": "Grandidierite", "benitoite": "Benitoite",
+             "alexandrite": "Alexandrite", "opal": "Void Opals", "tritium": "Tritium", "bromellite": "Bromellite"}
+ANILLO = {"eRingClass_Metalic": "Metálico", "eRingClass_MetalRich": "Rico en metales",
+          "eRingClass_Icy": "Hielo", "eRingClass_Rocky": "Rocoso"}
+RESERVA = {"PristineResources": "Virgen", "MajorResources": "Grande", "CommonResources": "Común",
+           "LowResources": "Baja", "DepletedResources": "Agotada"}
+
+def mineria(sname, m, mine, t):
+    """Anillos (Scan) y hotspots de los anillos (SAASignalsFound) de tus sistemas. Son datos fijos:
+    se guardan una vez y solo se cambian si llega algo nuevo. anillos[anillo] = {c, res, t}, hot[anillo] = {mineral: n}."""
+    with lock:
+        if m.get("event") == "Scan":
+            rings = [r for r in m.get("Rings") or [] if r.get("Name") and "Belt" not in r["Name"]]
+            if not rings:
+                return
+            an = mine.setdefault("anillos", {})
+            res = RESERVA.get(m.get("ReserveLevel") or "")
+            nuevo = False
+            for r in rings:
+                cl = ANILLO.get(r.get("RingClass") or "")
+                if not cl:
+                    continue
+                v = {"c": cl, "t": t}
+                if res:
+                    v["res"] = res
+                if an.get(r["Name"], {}).get("c") != cl or (res and an.get(r["Name"], {}).get("res") != res):
+                    nuevo = True
+                an[r["Name"]] = {**an.get(r["Name"], {}), **v}
+            if nuevo:
+                dirty[0] = True
+        else:
+            body = m.get("BodyName") or ""
+            if "Ring" not in body:
+                return                                     # solo los anillos (los planetas son de exobiologia)
+            sig = {(s_.get("Type") or "").replace("$SAA_SignalType_", "").strip("$;"): s_.get("Count", 1)
+                   for s_ in m.get("Signals") or [] if s_.get("Type")}
+            sig = {MINERALES.get(k.lower().replace(" ", ""), k): n for k, n in sig.items() if k}
+            if not sig:
+                return
+            hot = mine.setdefault("hot", {})
+            if {k: v for k, v in hot.get(body, {}).items() if k != "t"} != sig:
+                hot[body] = {**sig, "t": t}
+                dirty[0] = True
+
 def mercado(m, mine, t, sch):
     """Mercado (mejores ventas, precios disparados, chollos), naves del astillero y n.º de modulos."""
     nm = m.get("stationName")
@@ -975,7 +1023,9 @@ def mercado(m, mine, t, sch):
             dem = [c for c in C if (c.get("demand") or 0) > 0 and c.get("sellPrice")]
             alta = [c for c in dem if c.get("meanPrice") and c["sellPrice"] >= 1.3 * c["meanPrice"]]
             bar = [c for c in C if (c.get("stock") or 0) > 0 and c.get("buyPrice") and c.get("meanPrice") and c["buyPrice"] <= 0.7 * c["meanPrice"]]
-            e["mer"] = {"t": t, "n": len(C),
+            mi_ = [{"n": MINERALES[c["name"].lower()], "p": c["sellPrice"], "d": c.get("demand")}   # v12.6
+                   for c in dem if c["name"].lower() in MINERALES]
+            e["mer"] = {"t": t, "n": len(C), "min": sorted(mi_, key=lambda x: -x["p"]),
                         "vende": [{"n": c["name"], "p": c["sellPrice"], "d": c.get("demand")} for c in sorted(dem, key=lambda c: -c["sellPrice"])[:5]],
                         "alta": [{"n": c["name"], "p": c["sellPrice"], "m": c["meanPrice"]} for c in sorted(alta, key=lambda c: -c["sellPrice"] / c["meanPrice"])[:5]],
                         "barato": [{"n": c["name"], "p": c["buyPrice"], "m": c["meanPrice"], "s": c.get("stock")} for c in sorted(bar, key=lambda c: c["buyPrice"] / c["meanPrice"])[:5]]}
@@ -1227,6 +1277,8 @@ def process(pkt):
     if "/journal/" in sch and m.get("event") == "Docked":
         if vivo: estacion(sname, m, mine, t)              # v8: dueño y datos de la estacion
         return
+    if vivo and "/journal/" in sch and m.get("event") in ("Scan", "SAASignalsFound"):
+        mineria(sname, m, mine, t); return                # v12.6: anillos y hotspots
     if "/journal/" not in sch or m.get("event") not in ("FSDJump", "Location", "CarrierJump"):
         return
     if vivo and m.get("event") == "Location" and m.get("Docked"):

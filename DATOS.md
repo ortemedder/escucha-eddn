@@ -128,6 +128,8 @@ Reglas de las fases (las mismas en el escucha, el radar y la web; 7 días como m
 | `sis` | `pob` población, `eco`/`eco2` economía, `seg` seguridad, `gov` gobierno, `alg` alianza |
 | `hsis` | Cambios de población y seguridad: `[hora, pob, seg]`, los 10 últimos (v11) |
 | `pp` | `pot` potencia, `est` estado, `prog` progreso, `ref` refuerzo, `soc` socavamiento, `pots` presentes |
+| `anillos` | **v12.6** Anillos del sistema (evento `Scan`): `{"Nombre del anillo": {"c": tipo (Metálico, Rico en metales, Hielo, Rocoso), "res": reserva (Virgen, Grande, Común, Baja, Agotada), "t": hora}}` |
+| `hot` | **v12.6** Hotspots de los anillos (evento `SAASignalsFound`): `{"Nombre del anillo": {"Platinum": 2, "LTD": 1, ..., "t": hora}}` |
 
 ### Asentamientos (`asent["Nombre"]`, v11)
 | Campo | Qué es |
@@ -141,7 +143,7 @@ Reglas de las fases (las mismas en el escucha, el radar y la web; 7 días como m
 | `estado_t`, `serv`, `eco` | Desde cuándo tiene ese estado, número de servicios y economía (v11) |
 | `obra` | Solo en las obras (*Construction Site*, dueño Brewer Corporation): nombre de la estación que se está construyendo. Cuando alguien atraca en la estación terminada, la obra se borra (v11.1) |
 | `atq`, `neg` | Atraques por día (`ok`/`no`) y motivos de denegación |
-| `mer` | Mercado: `vende` mejores ventas, `alta` precios disparados, `barato` chollos |
+| `mer` | Mercado: `vende` mejores ventas, `alta` precios disparados, `barato` chollos, `min` minerales que compra (v12.6: `{n, p precio, d demanda}`, Platino, Painita, Osmio, LTD, Void Opals…) |
 | `naves`, `mods` | Naves del astillero y número de módulos |
 
 ---
@@ -170,7 +172,7 @@ estación ganada o perdida · **estación dañada / bajo ataque y su vuelta a la
 `ret`: `[{n, inf, est}]`. Se borran tras 10 días sin noticias.
 
 ## 8. Ideas para más adelante (datos que EDDN manda y no guardamos)
-- Cuerpos escaneados (`Scan`, `FSSAllBodiesFound`) en nuestros sistemas.
+- Cuerpos escaneados (`Scan`, `FSSAllBodiesFound`) en nuestros sistemas (v12.6 ya guarda los anillos y sus hotspots).
 
 ## historial.json (v12.5)
 
