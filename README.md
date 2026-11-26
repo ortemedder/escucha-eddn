@@ -89,3 +89,4 @@ Todos los campos de `faccion.json` están explicados en [DATOS.md](DATOS.md).
 
 Creado por CMDR ORTEM ED DER (ortemedder@gmail.com) con Claude.
 - v12.3: el relleno semanal pasa a los **jueves a las 7:10 UTC** (8:10 en España en invierno, 9:10 en verano), durante el mantenimiento de los servidores (`relleno_dia: 3`, `relleno_hora: 7`, `relleno_min: 10`, `relleno_utc: true`; con `relleno_utc: false` la hora es la de la Orange Pi).
+- v12.4: el relleno lee también los **atraques** (Docked), así cuenta pilotos que no saltan al sistema y las visitas se parecen más a las del escucha en vivo. Tarda más (más o menos el doble). Se quita con `"relleno_atraques": false` en `config.json`.
