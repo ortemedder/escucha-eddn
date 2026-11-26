@@ -22,6 +22,8 @@ la [cdsn-web](https://github.com/ortemedder/cdsn-web) y el [escucha-s3](https://
   mercado, astillero y atraques concedidos/denegados (`estaciones`), saltos por hora (`saltos`), rutas que pasan
   por tus sistemas (`rutas`), candidatos para expandirse (`expansion`), códice cercano (`codice`) y desde
   cuándo está cada portanaves (`d`). Avisos por Discord: rival que sube 3 ticks, estación ganada/perdida y pico de saltos.
+- **Minería (v12.6)**: anillos de tus sistemas (tipo y reserva), sus hotspots y los minerales que compran tus
+  estaciones (`anillos`, `hot`, `mer.min`). La web los usa para la resistencia del sistema.
 - **Versión** visible al arrancar y en `faccion.json` (`ver`).
 - **GitHub**: sube `faccion.json` a cdsn-datos cada 15 min si ha cambiado.
 - **Discord** (opcional): avisos de sistemas nuevos, conflictos, retiradas, expansiones, ventaja baja,
