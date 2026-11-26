@@ -4,7 +4,8 @@
 # - EDDN en directo (solo galaxia actual, no Legacy)
 # - EDSM cada 6 h para los sistemas de los que no llega nada
 # Configuracion: config.json junto a este archivo.
-VERSION = "v12.3"                # v12.3: relleno semanal los jueves a las 7:10 UTC (8:10 en invierno en España), durante el mantenimiento de los servidores
+VERSION = "v12.4"                # v12.4: el relleno lee tambien los atraques (Docked): mas visitas, como cuenta el escucha en vivo
+                                 # v12.3: relleno semanal los jueves a las 7:10 UTC (8:10 en invierno en España), durante el mantenimiento de los servidores
                                  # v12.2: un sistema con CDSN al 0,0 % cuenta como "ya no esta" (antes se quedaba con 0 %)
                                  # v12.1: faccion.json con los sistemas ordenados por importancia (el radar ESP32 coge los 140 primeros)
                                  # v12: sistemas_inara.csv (export de Inara en cdsn-datos): busca en EDSM los sistemas de CDSN que EDDN aun no ha visto
@@ -36,7 +37,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = {"faccion": "Caballeros de Sion", "puerto": 8090, "edsm_horas": 6, "github": "ortemedder/cdsn-datos",
        "github_min": 15, "resumen_hora": 21, "expansion_ly": 20, "vecinos_ly": 30,
-       "relleno_dia": 3, "relleno_hora": 7, "relleno_min": 10, "relleno_atras": 8, "relleno_utc": True}   # v12.3: relleno los jueves (0 lunes .. 6 domingo; -1 nunca) a las 7:10 UTC (mantenimiento), ultimos 8 dias
+       "relleno_dia": 3, "relleno_hora": 7, "relleno_min": 10, "relleno_atras": 8, "relleno_utc": True,
+       "relleno_atraques": True}   # v12.3: relleno los jueves (0 lunes .. 6 domingo; -1 nunca) a las 7:10 UTC (mantenimiento), ultimos 8 dias
 try:
     with open(os.path.join(HERE, "config.json"), encoding="utf-8") as f:
         CFG.update(json.load(f))
@@ -1504,6 +1506,8 @@ def relleno(dias, motivo):
     try:
         cmd = ["nice", "-n", "19", "python3", script, "descargar", "--dias", str(dias), "--rehacer",
                "--salida", salida, "--lista", DATA_FILE]
+        if CFG.get("relleno_atraques", True):               # v12.4: tambien los Docked (mas descarga, ~el doble de tiempo)
+            cmd.append("--atraques")
         subprocess.run(cmd, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=6 * 3600)
         with open(salida, encoding="utf-8") as f:
             R = json.load(f)
